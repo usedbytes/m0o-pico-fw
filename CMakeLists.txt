@@ -19,4 +19,4 @@ set_target_properties(rebound PROPERTIES COMPILE_FLAGS "-Wall")
 
 pico_set_linker_script(rebound ${CMAKE_CURRENT_SOURCE_DIR}/rebound_noboot2.ld)
 
-target_link_libraries(rebound pico_stdlib_headers pico_stdlib hardware_watchdog hardware_structs hardware_uart hardware_dma)
+target_link_libraries(rebound pico_stdlib_headers pico_stdlib hardware_watchdog hardware_structs hardware_uart hardware_dma pico_sync)
