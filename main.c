@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
 
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
@@ -323,6 +325,21 @@ void log_write(struct log_buffer *log, const char *message, uint16_t len)
 	mutex_exit(&log->lock);
 }
 
+int log_printf(struct log_buffer *log, const char *fmt, ...)
+{
+	static char buf[256];
+	va_list args;
+	int ret;
+
+	va_start(args, fmt);
+	ret = vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+
+	log_write(log, buf, ret);
+
+	return ret;
+}
+
 uint16_t log_drain(struct log_buffer *log, uint8_t *buf, uint16_t size)
 {
 	mutex_enter_blocking(&log->lock);
@@ -383,6 +400,7 @@ int main() {
 	ctx.uart_buf = uart_buf;
 	enum state state = STATE_WAIT_FOR_SYNC;
 
+	int i = 0;
 	while (1) {
 		switch (state) {
 		case STATE_WAIT_FOR_SYNC:
@@ -391,7 +409,7 @@ int main() {
 			log_write(&logger, "done waiting", strlen("done waiting"));
 			break;
 		case STATE_READ_OPCODE:
-			log_write(&logger, "read opcode", strlen("read opcode"));
+			log_printf(&logger, "read opcode %d", i++);
 			state = state_read_opcode(&ctx);
 			log_write(&logger, "done opcode", strlen("done opcode"));
 			break;
