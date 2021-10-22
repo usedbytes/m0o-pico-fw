@@ -224,7 +224,7 @@ static enum state state_error(struct cmd_context *ctx)
 
 struct log_message {
 	uint32_t timestamp;
-	uint8_t len;
+	uint16_t len;
 	// char string[];
 } __attribute__ ((packed));
 
@@ -234,7 +234,7 @@ struct log_buffer {
 	volatile uint16_t insert_idx;
 	volatile uint16_t extract_idx;
 	volatile uint16_t space;
-} __attribute__ ((aligned (LOG_BUFFER_SIZE)));
+};
 
 void log_init(struct log_buffer *log)
 {
@@ -281,19 +281,14 @@ static inline void __log_read_bytes(struct log_buffer *log, uint8_t *data, uint1
 	log->space += len;
 }
 
-static inline void log_make_space(struct log_buffer *log, uint16_t at_least)
+static inline void log_make_space(struct log_buffer *log, uint32_t at_least)
 {
 	int space = log->space;
 	int extract_idx = log->extract_idx;
 
 	while (space < at_least) {
 		struct log_message msg;
-		uint16_t len = sizeof(msg);
-		uint16_t space_before_wrap = sizeof(log->buf) - extract_idx;
-		uint16_t first_len = space_before_wrap < len ? space_before_wrap : len;
-
-		memcpy((uint8_t *)&msg, log->buf + extract_idx, first_len);
-		memcpy((uint8_t *)&msg + first_len, log->buf, len - first_len);
+		__log_peek_bytes(log, (uint8_t *)&msg, sizeof(msg));
 
 		uint16_t msg_size = sizeof(msg) + msg.len;
 
@@ -304,13 +299,12 @@ static inline void log_make_space(struct log_buffer *log, uint16_t at_least)
 	log->space = space;
 }
 
-void log_write(struct log_buffer *log, const char *message, uint8_t len)
+void log_write(struct log_buffer *log, const char *message, uint16_t len)
 {
-	int space_reqd = sizeof(struct log_message) + len;
+	uint32_t space_reqd = sizeof(struct log_message) + len;
 
-	// Will never fit.
-	// TODO: Drop or truncate?
-	if (space_reqd >= (sizeof(log->buf) - sizeof(struct log_message))) {
+	// Will never fit, so just drop it.
+	if ((space_reqd > UINT16_MAX) || space_reqd >= sizeof(log->buf)) {
 		return;
 	}
 
@@ -327,8 +321,6 @@ void log_write(struct log_buffer *log, const char *message, uint8_t len)
 	__log_write_bytes(log, (const uint8_t *)message, len);
 
 	mutex_exit(&log->lock);
-
-	// unlock
 }
 
 uint16_t log_drain(struct log_buffer *log, uint8_t *buf, uint16_t size)
@@ -341,12 +333,7 @@ uint16_t log_drain(struct log_buffer *log, uint8_t *buf, uint16_t size)
 
 	while (extract_idx != insert_idx) {
 		struct log_message msg;
-		uint16_t len = sizeof(msg);
-		uint16_t space_before_wrap = sizeof(log->buf) - extract_idx;
-		uint16_t first_len = space_before_wrap < len ? space_before_wrap : len;
-
-		memcpy((uint8_t *)&msg, log->buf + extract_idx, first_len);
-		memcpy((uint8_t *)&msg + first_len, log->buf, len - first_len);
+		__log_peek_bytes(log, (uint8_t *)&msg, sizeof(msg));
 
 		uint16_t msg_size = sizeof(msg) + msg.len;
 		if (used + msg_size >= size) {
@@ -366,6 +353,10 @@ uint16_t log_drain(struct log_buffer *log, uint8_t *buf, uint16_t size)
 static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
 {
 	*data_len_out = 0;
+	// TODO: This is an unfortunate limitation of the interface, we don't
+	// know the real response size until we drain the buffer in handle_logs
+	// so we just say we'll use the whole buffer.
+	// This means the transfer will be larger than it needs to be.
 	*resp_data_len_out = MAX_DATA_LEN;
 
 	return RSP_OK;
@@ -386,23 +377,6 @@ int main() {
 	uart_set_hw_flow(uart0, false, false);
 
 	log_init(&logger);
-
-	/*
-	uint8_t tmp[1024];
-	uint16_t drained;
-
-	while (1) {
-		uart_write_blocking(uart0, "BLAH BLAH\r\n", strlen("BLAH BLAH\r\n"));
-		log_write(&logger, "Hello", strlen("Hello"));
-		log_write(&logger, "World", strlen("World"));
-
-		drained = log_drain(&logger, tmp, sizeof(tmp));
-
-		uart_write_blocking(uart0, tmp, drained);
-
-		sleep_ms(1000);
-	}
-	*/
 
 	struct cmd_context ctx;
 	uint8_t uart_buf[(sizeof(uint32_t) * (1 + MAX_NARG)) + MAX_DATA_LEN];
