@@ -295,13 +295,23 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 
 	memcpy(&state, data_in, sizeof(state));
 
-	log_printf(&logger, "L: %2x,%2x R: %2x,%2x, Hat: %1x, Buttons: %04x\n",
+	log_printf(&logger, "L: %2x,%2x R: %2x,%2x, Hat: %1x, Buttons: %04x",
 			state.lx, state.ly, state.rx, state.ry, state.hat, state.buttons);
+
+	if (state.buttons) {
+		gpio_put(PICO_DEFAULT_LED_PIN, 1);
+	} else {
+		gpio_put(PICO_DEFAULT_LED_PIN, 0);
+	}
 
 	return RSP_OK;
 }
 
-int main() {
+int main()
+{
+	gpio_init(PICO_DEFAULT_LED_PIN);
+	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
+
 	uart_init(uart0, UART_BAUD);
 	gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
 	gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
@@ -314,11 +324,10 @@ int main() {
 	ctx.uart_buf = uart_buf;
 	enum state state = STATE_WAIT_FOR_SYNC;
 
-	int i = 0;
 	while (1) {
 		switch (state) {
 		case STATE_WAIT_FOR_SYNC:
-			log_write(&logger, "waiting for sync", strlen("waiting for sync"));
+			//log_write(&logger, "waiting for sync", strlen("waiting for sync"));
 			state = state_wait_for_sync(&ctx);
 			//log_write(&logger, "done waiting", strlen("done waiting"));
 			break;
