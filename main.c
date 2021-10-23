@@ -23,15 +23,44 @@
 
 #define CMD_SYNC  (('S' << 0) | ('Y' << 8) | ('N' << 16) | ('C' << 24))
 #define CMD_LOGS  (('L' << 0) | ('O' << 8) | ('G' << 16) | ('S' << 24))
-#define RSP_SYNC (('P' << 0) | ('I' << 8) | ('C' << 16) | ('O' << 24))
+#define CMD_INPUT (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
+#define RSP_SYNC_APP (('R' << 0) | ('B' << 8) | ('N' << 16) | ('D' << 24))
+#define RSP_SYNC_BL (('P' << 0) | ('I' << 8) | ('C' << 16) | ('O' << 24))
 #define RSP_OK   (('O' << 0) | ('K' << 8) | ('O' << 16) | ('K' << 24))
 #define RSP_ERR  (('E' << 0) | ('R' << 8) | ('R' << 16) | ('!' << 24))
+
+#define BTN_BIT_A       0
+#define BTN_BIT_B       1
+#define BTN_BIT_X       2
+#define BTN_BIT_Y       3
+#define BTN_BIT_L1      4
+#define BTN_BIT_L2      5
+#define BTN_BIT_L3      6
+#define BTN_BIT_R1      7
+#define BTN_BIT_R2      8
+#define BTN_BIT_R3      9
+#define BTN_BIT_START   10
+#define BTN_BIT_SELECT  11
+#define BTN_BIT_HEART   12
+#define BTN_BIT_STAR    13
+
+struct bt_hid_state {
+	uint16_t buttons;
+	uint8_t lx;
+	uint8_t ly;
+	uint8_t rx;
+	uint8_t ry;
+	uint8_t hat;
+	uint8_t pad;
+};
 
 struct log_buffer logger;
 
 static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
+static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
 struct command_desc {
 	uint32_t opcode;
@@ -56,6 +85,13 @@ const struct command_desc cmds[] = {
 		.size = &size_logs,
 		.handle = &handle_logs,
 	},
+	{
+		.opcode = CMD_INPUT,
+		.nargs = 0,
+		.resp_nargs = 0,
+		.size = &size_input,
+		.handle = &handle_input,
+	},
 };
 
 const unsigned int N_CMDS = (sizeof(cmds) / sizeof(cmds[0]));
@@ -69,7 +105,7 @@ static bool is_error(uint32_t status)
 
 static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
-	return RSP_SYNC;
+	return RSP_SYNC_APP;
 }
 
 void reboot_to_bootloader()
@@ -157,6 +193,7 @@ static enum state state_read_args(struct cmd_context *ctx)
 	if (!desc) {
 		// TODO: Error handler that can do args?
 		ctx->status = RSP_ERR;
+		//ctx->status = ctx->opcode;
 		return STATE_ERROR;
 	}
 
@@ -220,6 +257,7 @@ static enum state state_error(struct cmd_context *ctx)
 	uart_write_blocking(uart0, ctx->uart_buf, resp_len);
 
 	return STATE_WAIT_FOR_SYNC;
+	//return STATE_READ_OPCODE;
 }
 
 static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
@@ -236,8 +274,29 @@ static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *r
 
 static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
+	//log_printf(&logger, "logs requested");
 	uint16_t drained = log_drain(&logger, resp_data_out, MAX_DATA_LEN);
 	resp_args_out[0] = drained;
+
+	return RSP_OK;
+}
+
+static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
+{
+	*data_len_out = sizeof(struct bt_hid_state);
+	*resp_data_len_out = 0;
+
+	return RSP_OK;
+}
+
+static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	struct bt_hid_state state;
+
+	memcpy(&state, data_in, sizeof(state));
+
+	log_printf(&logger, "L: %2x,%2x R: %2x,%2x, Hat: %1x, Buttons: %04x\n",
+			state.lx, state.ly, state.rx, state.ry, state.hat, state.buttons);
 
 	return RSP_OK;
 }
@@ -261,32 +320,32 @@ int main() {
 		case STATE_WAIT_FOR_SYNC:
 			log_write(&logger, "waiting for sync", strlen("waiting for sync"));
 			state = state_wait_for_sync(&ctx);
-			log_write(&logger, "done waiting", strlen("done waiting"));
+			//log_write(&logger, "done waiting", strlen("done waiting"));
 			break;
 		case STATE_READ_OPCODE:
-			log_printf(&logger, "read opcode %d", i++);
+			//log_printf(&logger, "read opcode %d", i++);
 			state = state_read_opcode(&ctx);
-			log_write(&logger, "done opcode", strlen("done opcode"));
+			//log_write(&logger, "done opcode", strlen("done opcode"));
 			break;
 		case STATE_READ_ARGS:
-			log_write(&logger, "read args", strlen("read args"));
+			//log_write(&logger, "read args", strlen("read args"));
 			state = state_read_args(&ctx);
-			log_write(&logger, "done args", strlen("done args"));
+			//log_write(&logger, "done args", strlen("done args"));
 			break;
 		case STATE_READ_DATA:
-			log_write(&logger, "read data", strlen("read data"));
+			//log_write(&logger, "read data", strlen("read data"));
 			state = state_read_data(&ctx);
-			log_write(&logger, "done data", strlen("done data"));
+			//log_write(&logger, "done data", strlen("done data"));
 			break;
 		case STATE_HANDLE_DATA:
-			log_write(&logger, "handle data", strlen("handle data"));
+			//log_write(&logger, "handle data", strlen("handle data"));
 			state = state_handle_data(&ctx);
-			log_write(&logger, "done handle", strlen("done handle"));
+			//log_write(&logger, "done handle", strlen("done handle"));
 			break;
 		case STATE_ERROR:
-			log_write(&logger, "do error", strlen("do error"));
+			//log_write(&logger, "do error", strlen("do error"));
 			state = state_error(&ctx);
-			log_write(&logger, "done error", strlen("done error"));
+			//log_write(&logger, "done error", strlen("done error"));
 			break;
 		}
 	}
