@@ -60,12 +60,17 @@ static inline void __log_read_bytes(struct log_buffer *log, uint8_t *data, uint1
 	log->space += len;
 }
 
-static inline void log_make_space(struct log_buffer *log, uint32_t at_least)
+static inline void __log_make_space(struct log_buffer *log, uint32_t at_least)
 {
 	int space = log->space;
 	int extract_idx = log->extract_idx;
 
-	while (space < at_least) {
+	// FIXME: Using <= wastes some space, but it avoids a corner case
+	// where the buffer ends up exactly full meaning that drain
+	// stops working.
+	// We can fix this by switching the insert/extract indices to be
+	// non-modulo.
+	while (space <= at_least) {
 		struct log_message msg;
 		__log_peek_bytes(log, (uint8_t *)&msg, sizeof(msg));
 
@@ -89,7 +94,7 @@ void log_write(struct log_buffer *log, const char *message, uint16_t len)
 
 	mutex_enter_blocking(&log->lock);
 
-	log_make_space(log, space_reqd);
+	__log_make_space(log, space_reqd);
 
 	struct log_message msg = {
 		.timestamp = time_us_32(),
