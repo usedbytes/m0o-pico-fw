@@ -8,6 +8,7 @@
 #include "pico/stdlib.h"
 #include "pico/mutex.h"
 #include "hardware/dma.h"
+#include "hardware/pwm.h"
 #include "hardware/uart.h"
 #include "hardware/watchdog.h"
 #include "hardware/structs/uart.h"
@@ -289,6 +290,39 @@ static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *
 	return RSP_OK;
 }
 
+#define PWM_SLICE_A 1
+#define PWM_SLICE_B 5
+#define PWM_MAX (200)
+#define PWM_MIN (PWM_MAX - 127)
+
+enum motor_id {
+	MOTOR_A,
+	MOTOR_B,
+};
+
+enum motor_dir {
+	MOTOR_DIR_FWD,
+	MOTOR_DIR_REV,
+};
+
+static void set_motor(enum motor_id motor, uint8_t value)
+{
+	uint slice = motor == MOTOR_A ? PWM_SLICE_A : PWM_SLICE_B;
+
+	if (value == 0x80) {
+		pwm_set_chan_level(slice, PWM_CHAN_A, 0);
+		pwm_set_chan_level(slice, PWM_CHAN_B, 0);
+	} else {
+		if (value < 0x80) {
+			pwm_set_chan_level(slice, PWM_CHAN_A, 0);
+			pwm_set_chan_level(slice, PWM_CHAN_B, PWM_MIN + (0x80 - value));
+		} else {
+			pwm_set_chan_level(slice, PWM_CHAN_A, PWM_MIN + (value - 0x80));
+			pwm_set_chan_level(slice, PWM_CHAN_B, 0);
+		}
+	}
+}
+
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	struct bt_hid_state state;
@@ -304,6 +338,9 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 		gpio_put(PICO_DEFAULT_LED_PIN, 0);
 	}
 
+	set_motor(MOTOR_A, state.ly);
+	set_motor(MOTOR_B, state.ry);
+
 	return RSP_OK;
 }
 
@@ -318,6 +355,19 @@ int main()
 	uart_set_hw_flow(uart0, false, false);
 
 	log_init(&logger);
+
+	gpio_set_function(18, GPIO_FUNC_PWM);
+	gpio_set_function(19, GPIO_FUNC_PWM);
+	pwm_set_wrap(PWM_SLICE_A, PWM_MAX + 1);
+	pwm_set_chan_level(PWM_SLICE_A, PWM_CHAN_A, 0);
+	pwm_set_chan_level(PWM_SLICE_A, PWM_CHAN_B, 0);
+	pwm_set_enabled(PWM_SLICE_A, true);
+	gpio_set_function(26, GPIO_FUNC_PWM);
+	gpio_set_function(27, GPIO_FUNC_PWM);
+	pwm_set_wrap(PWM_SLICE_B, PWM_MAX + 1);
+	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_A, 0);
+	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_B, 0);
+	pwm_set_enabled(PWM_SLICE_B, true);
 
 	struct cmd_context ctx;
 	uint8_t uart_buf[(sizeof(uint32_t) * (1 + MAX_NARG)) + MAX_DATA_LEN];
