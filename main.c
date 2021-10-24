@@ -292,7 +292,7 @@ static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *
 
 #define PWM_SLICE_A 1
 #define PWM_SLICE_B 5
-#define PWM_MAX (200)
+#define PWM_MAX (127)
 #define PWM_MIN (PWM_MAX - 127)
 
 enum motor_id {
