@@ -22,13 +22,14 @@
 #define UART_RX_PIN 16
 #define UART_BAUD   921600
 
-#define CMD_SYNC  (('S' << 0) | ('Y' << 8) | ('N' << 16) | ('C' << 24))
-#define CMD_LOGS  (('L' << 0) | ('O' << 8) | ('G' << 16) | ('S' << 24))
-#define CMD_INPUT (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
+#define CMD_SYNC     (('S' << 0) | ('Y' << 8) | ('N' << 16) | ('C' << 24))
+#define CMD_LOGS     (('L' << 0) | ('O' << 8) | ('G' << 16) | ('S' << 24))
+#define CMD_INPUT    (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
+#define CMD_REBOOT   (('B' << 0) | ('O' << 8) | ('O' << 16) | ('T' << 24))
 #define RSP_SYNC_APP (('R' << 0) | ('B' << 8) | ('N' << 16) | ('D' << 24))
-#define RSP_SYNC_BL (('P' << 0) | ('I' << 8) | ('C' << 16) | ('O' << 24))
-#define RSP_OK   (('O' << 0) | ('K' << 8) | ('O' << 16) | ('K' << 24))
-#define RSP_ERR  (('E' << 0) | ('R' << 8) | ('R' << 16) | ('!' << 24))
+#define RSP_SYNC_BL  (('P' << 0) | ('I' << 8) | ('C' << 16) | ('O' << 24))
+#define RSP_OK       (('O' << 0) | ('K' << 8) | ('O' << 16) | ('K' << 24))
+#define RSP_ERR      (('E' << 0) | ('R' << 8) | ('R' << 16) | ('!' << 24))
 
 #define BTN_BIT_A       0
 #define BTN_BIT_B       1
@@ -62,6 +63,8 @@ static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *r
 static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
+static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
 struct command_desc {
 	uint32_t opcode;
@@ -93,6 +96,15 @@ const struct command_desc cmds[] = {
 		.size = &size_input,
 		.handle = &handle_input,
 	},
+	{
+		// BOOT to_bootloader
+		// NO RESPONSE
+		.opcode = CMD_REBOOT,
+		.nargs = 1,
+		.resp_nargs = 0,
+		.size = &size_reboot,
+		.handle = &handle_reboot,
+	},
 };
 
 const unsigned int N_CMDS = (sizeof(cmds) / sizeof(cmds[0]));
@@ -107,15 +119,6 @@ static bool is_error(uint32_t status)
 static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	return RSP_SYNC_APP;
-}
-
-void reboot_to_bootloader()
-{
-	hw_clear_bits(&watchdog_hw->ctrl, WATCHDOG_CTRL_ENABLE_BITS);
-	watchdog_hw->scratch[5] = ENTRY_MAGIC;
-	watchdog_hw->scratch[6] = ~ENTRY_MAGIC;
-	watchdog_reboot(0, 0, 0);
-	tight_loop_contents();
 }
 
 static const struct command_desc *find_command_desc(uint32_t opcode)
@@ -342,6 +345,39 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 	set_motor(MOTOR_B, state.ry);
 
 	return RSP_OK;
+}
+
+static void do_reboot(bool to_bootloader)
+{
+	hw_clear_bits(&watchdog_hw->ctrl, WATCHDOG_CTRL_ENABLE_BITS);
+	if (to_bootloader) {
+		watchdog_hw->scratch[5] = ENTRY_MAGIC;
+		watchdog_hw->scratch[6] = ~ENTRY_MAGIC;
+	} else {
+		watchdog_hw->scratch[5] = 0;
+		watchdog_hw->scratch[6] = 0;
+	}
+	watchdog_reboot(0, 0, 0);
+	while (1) {
+		tight_loop_contents();
+		asm("");
+	}
+}
+
+static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
+{
+	*data_len_out = 0;
+	*resp_data_len_out = 0;
+
+	return RSP_OK;
+}
+
+static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	// Will never return
+	do_reboot(args_in[0]);
+
+	return RSP_ERR;
 }
 
 int main()
