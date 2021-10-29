@@ -14,6 +14,7 @@ pico_sdk_init()
 add_executable(rebound
 	main.c
 	log.c
+	comm.c
 )
 
 pico_add_extra_outputs(rebound)

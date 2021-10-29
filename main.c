@@ -15,6 +15,7 @@
 #include "hardware/structs/watchdog.h"
 
 #include "log.h"
+#include "comm.h"
 
 #define ENTRY_MAGIC 0xb105f00d
 
@@ -23,10 +24,12 @@
 #define UART_BAUD   921600
 
 #define CMD_SYNC     (('S' << 0) | ('Y' << 8) | ('N' << 16) | ('C' << 24))
+#define CMD_SYNC2    (('S' << 0) | ('Y' << 8) | ('N' << 16) | ('2' << 24))
 #define CMD_LOGS     (('L' << 0) | ('O' << 8) | ('G' << 16) | ('S' << 24))
 #define CMD_INPUT    (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
 #define CMD_REBOOT   (('B' << 0) | ('O' << 8) | ('O' << 16) | ('T' << 24))
 #define RSP_SYNC_APP (('R' << 0) | ('B' << 8) | ('N' << 16) | ('D' << 24))
+#define RSP_SYNC_APP2 (('R' << 0) | ('B' << 8) | ('N' << 16) | ('2' << 24))
 #define RSP_SYNC_BL  (('P' << 0) | ('I' << 8) | ('C' << 16) | ('O' << 24))
 #define RSP_OK       (('O' << 0) | ('K' << 8) | ('O' << 16) | ('K' << 24))
 #define RSP_ERR      (('E' << 0) | ('R' << 8) | ('R' << 16) | ('!' << 24))
@@ -59,6 +62,7 @@ struct bt_hid_state {
 struct log_buffer logger;
 
 static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+static uint32_t handle_sync2(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
@@ -66,6 +70,7 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
+/*
 struct command_desc {
 	uint32_t opcode;
 	uint32_t nargs;
@@ -73,14 +78,22 @@ struct command_desc {
 	uint32_t (*size)(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 	uint32_t (*handle)(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 };
+*/
 
-const struct command_desc cmds[] = {
+const struct comm_command cmds[] = {
 	{
 		.opcode = CMD_SYNC,
 		.nargs = 0,
 		.resp_nargs = 0,
 		.size = NULL,
 		.handle = &handle_sync,
+	},
+	{
+		.opcode = CMD_SYNC2,
+		.nargs = 0,
+		.resp_nargs = 0,
+		.size = NULL,
+		.handle = &handle_sync2,
 	},
 	{
 		.opcode = CMD_LOGS,
@@ -106,19 +119,25 @@ const struct command_desc cmds[] = {
 		.handle = &handle_reboot,
 	},
 };
-
 const unsigned int N_CMDS = (sizeof(cmds) / sizeof(cmds[0]));
+
+static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	return RSP_SYNC_APP;
+}
+
+static uint32_t handle_sync2(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	return RSP_SYNC_APP2;
+}
+
+#if 0
 const uint32_t MAX_NARG = 5;
 const uint32_t MAX_DATA_LEN = 1024;
 
 static bool is_error(uint32_t status)
 {
 	return status == RSP_ERR;
-}
-
-static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
-{
-	return RSP_SYNC_APP;
 }
 
 static const struct command_desc *find_command_desc(uint32_t opcode)
@@ -263,6 +282,7 @@ static enum state state_error(struct cmd_context *ctx)
 	return STATE_WAIT_FOR_SYNC;
 	//return STATE_READ_OPCODE;
 }
+#endif
 
 static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
 {
@@ -271,7 +291,7 @@ static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *r
 	// know the real response size until we drain the buffer in handle_logs
 	// so we just say we'll use the whole buffer.
 	// This means the transfer will be larger than it needs to be.
-	*resp_data_len_out = MAX_DATA_LEN;
+	*resp_data_len_out = COMM_MAX_DATA_LEN;
 
 	return RSP_OK;
 }
@@ -279,7 +299,7 @@ static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *r
 static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	//log_printf(&logger, "logs requested");
-	uint16_t drained = log_drain(&logger, resp_data_out, MAX_DATA_LEN);
+	uint16_t drained = log_drain(&logger, resp_data_out, COMM_MAX_DATA_LEN);
 	resp_args_out[0] = drained;
 
 	return RSP_OK;
@@ -405,12 +425,21 @@ int main()
 	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_B, 0);
 	pwm_set_enabled(PWM_SLICE_B, true);
 
+	/*
 	struct cmd_context ctx;
 	uint8_t uart_buf[(sizeof(uint32_t) * (1 + MAX_NARG)) + MAX_DATA_LEN];
 	ctx.uart_buf = uart_buf;
 	enum state state = STATE_WAIT_FOR_SYNC;
+	*/
+
+	comm_init(cmds, N_CMDS, CMD_SYNC);
 
 	while (1) {
+		//gpio_put(PICO_DEFAULT_LED_PIN, 1);
+		sleep_ms(100);
+		//gpio_put(PICO_DEFAULT_LED_PIN, 0);
+		//sleep_ms(100);
+#if 0
 		switch (state) {
 		case STATE_WAIT_FOR_SYNC:
 			//log_write(&logger, "waiting for sync", strlen("waiting for sync"));
@@ -443,5 +472,6 @@ int main()
 			//log_write(&logger, "done error", strlen("done error"));
 			break;
 		}
+#endif
 	}
 }
