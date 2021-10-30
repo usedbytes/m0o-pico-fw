@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "pico/mutex.h"
 #include "hardware/dma.h"
 #include "hardware/pwm.h"
@@ -191,6 +192,11 @@ static void do_reboot(bool to_bootloader)
 		watchdog_hw->scratch[5] = 0;
 		watchdog_hw->scratch[6] = 0;
 	}
+
+	// This probably isn't strictly necessary, because the watchdog should
+	// take care of it.
+	multicore_reset_core1();
+
 	watchdog_reboot(0, 0, 0);
 	while (1) {
 		tight_loop_contents();
@@ -212,6 +218,15 @@ static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *res
 	do_reboot(args_in[0]);
 
 	return COMM_RSP_ERR;
+}
+
+static void core1_main(void)
+{
+	int i = 0;
+	while (1) {
+		sleep_ms(1000);
+		log_printf(&logger, "From core 1: %d", i++);
+	}
 }
 
 int main()
@@ -236,8 +251,11 @@ int main()
 	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_B, 0);
 	pwm_set_enabled(PWM_SLICE_B, true);
 
+	multicore_launch_core1(core1_main);
 
+	int i = 0;
 	while (1) {
+		log_printf(&logger, "From core 0: %d", i++);
 		sleep_ms(100);
 	}
 }
