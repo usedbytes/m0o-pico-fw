@@ -14,6 +14,65 @@
 #include "util.h"
 #include "ov7670_reg.h"
 
+#define PIN_VSYNC 2
+#define PIN_HREF  3
+#define PIN_PXCLK 4
+#define PIN_D0    5
+
+#define IMG_W 163
+#define IMG_H 72
+
+#define CMD_SNAP    (('S' << 0) | ('N' << 8) | ('A' << 16) | ('P' << 24))
+#define CMD_SNAPGET (('S' << 0) | ('G' << 8) | ('E' << 16) | ('T' << 24))
+
+uint8_t img[IMG_W * IMG_H];
+volatile bool go = false;
+volatile bool done = false;
+
+static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+
+const struct comm_command snap_cmd = {
+	.opcode = CMD_SNAP,
+	.nargs = 0,
+	.resp_nargs = 0,
+	.size = NULL,
+	.handle = &handle_snap,
+};
+
+const struct comm_command snapget_cmd = {
+	// SGET w h addr size
+	.opcode = CMD_SNAPGET,
+	.nargs = 0,
+	.resp_nargs = 4,
+	.size = NULL,
+	.handle = &handle_snapget,
+};
+
+static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	go = true;
+
+	return COMM_RSP_OK;
+}
+
+static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	if (done) {
+		resp_args_out[0] = IMG_W;
+		resp_args_out[1] = IMG_H;
+		resp_args_out[2] = (uint32_t)img;
+		resp_args_out[3] = sizeof(img);
+	} else {
+		resp_args_out[0] = 0;
+		resp_args_out[1] = 0;
+		resp_args_out[2] = 0;
+		resp_args_out[3] = 0;
+	}
+
+	return COMM_RSP_OK;
+}
+
 static int ov7670_write(uint8_t addr, uint8_t value) {
 	int ret;
 	static uint8_t data[2];
@@ -93,16 +152,6 @@ static int ov7670_init(void) {
 	return 0;
 }
 
-#define PIN_VSYNC 2
-#define PIN_HREF  3
-#define PIN_PXCLK 4
-#define PIN_D0    5
-
-#define IMG_W 163
-#define IMG_H 72
-
-uint8_t img[IMG_W * IMG_H];
-
 void run_camera(void)
 {
 	// 125 MHz / 5 = 25 MHz
@@ -153,7 +202,10 @@ void run_camera(void)
 		eof = 0;
 		idx = 0;
 
-		sleep_ms(1000);
+		while (!go);
+		go = false;
+		done = false;
+
 		// Wait for vsync
 		while (!gpio_get(PIN_VSYNC));
 		while (gpio_get(PIN_VSYNC));
@@ -194,6 +246,9 @@ void run_camera(void)
 			}
 			y++;
 		}
+
+		done = true;
+
 		log_printf(&util_logger, "Frame %d,%d", x, y);
 
 		/*
