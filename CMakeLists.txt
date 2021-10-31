@@ -19,6 +19,8 @@ add_executable(rebound
 	camera.c
 )
 
+pico_generate_pio_header(rebound ${CMAKE_CURRENT_LIST_DIR}/camera.pio)
+
 pico_add_extra_outputs(rebound)
 
 set_target_properties(rebound PROPERTIES COMPILE_FLAGS "-Wall")
@@ -32,6 +34,7 @@ target_link_libraries(rebound
 	pico_sync
 	hardware_i2c
 	hardware_dma
+	hardware_pio
 	hardware_pwm
 	hardware_structs
 	hardware_watchdog

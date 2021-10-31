@@ -1,0 +1,61 @@
+;
+; Copyright (c) 2021 Brian Starkey <stark3y@gmail.com>
+;
+; SPDX-License-Identifier: BSD-3-Clause
+;
+
+.program camera_frame
+
+.wrap_target
+irq wait 0          ; Synchronise with processor
+pull
+out Y, 32
+pull
+
+wait 1 gpio 2       ; Wait for VSYNC to go high
+
+loop_line:
+mov X, OSR
+wait 1 gpio 3 [2]   ; Wait for HSYNC to go high
+
+loop_pixel:
+wait 0 gpio 4        ; Wait for PXCLK to go low
+wait 1 gpio 4        ; Wait for PXCLK to go high
+in PINS 8           ; Grab a byte of data
+jmp x-- loop_pixel
+
+wait 0 gpio 3       ; Wait for HSYNC to go high
+jmp y-- loop_line
+.wrap
+
+% c-sdk {
+static inline void camera_frame_program_init(PIO pio, uint sm, uint offset, uint data_base_pin)
+{
+    pio_sm_set_consecutive_pindirs(pio, sm, data_base_pin, 8, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, 2, 3, false);
+    for (uint i = 2; i < 2 + 3 + 8; i++) {
+        pio_gpio_init(pio, i);
+    }
+
+    pio_sm_config c = camera_frame_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, data_base_pin);
+    sm_config_set_in_shift(&c, true, true, 32);
+    sm_config_set_out_shift(&c, true, false, 0);
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void camera_wait_for_eof(PIO pio)
+{
+    while (!pio_interrupt_get(pio, 0));
+}
+
+static inline void camera_do_frame(PIO pio, uint sm, uint32_t width, uint32_t height)
+{
+    camera_wait_for_eof(pio);
+    pio_sm_put_blocking(pio, sm, height - 1);
+    pio_sm_put_blocking(pio, sm, width - 1);
+    pio_interrupt_clear(pio, 0);
+}
+%}
