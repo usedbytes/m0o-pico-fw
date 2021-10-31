@@ -61,29 +61,29 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
-const struct comm_command cmds[] = {
-	{
+const struct comm_command *const cmds[] = {
+	&(const struct comm_command){
 		.opcode = CMD_SYNC,
 		.nargs = 0,
 		.resp_nargs = 0,
 		.size = NULL,
 		.handle = &handle_sync,
 	},
-	{
+	&(const struct comm_command){
 		.opcode = CMD_LOGS,
 		.nargs = 0,
 		.resp_nargs = 1,
 		.size = &size_logs,
 		.handle = &handle_logs,
 	},
-	{
+	&(const struct comm_command){
 		.opcode = CMD_INPUT,
 		.nargs = 0,
 		.resp_nargs = 0,
 		.size = &size_input,
 		.handle = &handle_input,
 	},
-	{
+	&(const struct comm_command){
 		// BOOT to_bootloader
 		// NO RESPONSE
 		.opcode = CMD_REBOOT,

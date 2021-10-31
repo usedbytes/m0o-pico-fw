@@ -23,7 +23,7 @@
 
 struct comm_context {
 	volatile uint8_t comm_buf[(sizeof(uint32_t) * (1 + COMM_MAX_NARG)) + COMM_MAX_DATA_LEN];
-	const struct comm_command *cmds;
+	const struct comm_command *const *cmds;
 	int n_cmds;
 	uint32_t sync_opcode;
 
@@ -50,8 +50,8 @@ static const struct comm_command *find_command_desc(uint32_t opcode)
 	unsigned int i;
 
 	for (i = 0; i < ctx.n_cmds; i++) {
-		if (ctx.cmds[i].opcode == opcode) {
-			return &ctx.cmds[i];
+		if (ctx.cmds[i]->opcode == opcode) {
+			return ctx.cmds[i];
 		}
 	}
 
@@ -254,14 +254,13 @@ static void dma_irq_handler(void)
 	ctx.dma_cb();
 }
 
-void comm_init(const struct comm_command *cmds, int n_cmds, uint32_t sync_opcode)
+void comm_init(const struct comm_command *const *cmds, int n_cmds, uint32_t sync_opcode)
 {
-	const struct comm_command *cmd = cmds;
 	int i;
 
-	for (i = 0; i < n_cmds; i++, cmd++) {
-		assert(cmd->nargs <= MAX_NARG);
-		assert(cmd->resp_nargs <= MAX_NARG);
+	for (i = 0; i < n_cmds; i++) {
+		assert(cmds[i]->nargs <= MAX_NARG);
+		assert(cmds[i]->resp_nargs <= MAX_NARG);
 	}
 
 	memset((void *)ctx.comm_buf, 0, sizeof(ctx.comm_buf));
