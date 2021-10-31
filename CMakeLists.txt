@@ -15,6 +15,7 @@ add_executable(rebound
 	main.c
 	log.c
 	comm.c
+	util.c
 )
 
 pico_add_extra_outputs(rebound)

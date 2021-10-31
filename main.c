@@ -7,24 +7,14 @@
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-#include "pico/mutex.h"
 #include "hardware/dma.h"
 #include "hardware/pwm.h"
-#include "hardware/uart.h"
-#include "hardware/watchdog.h"
-#include "hardware/structs/uart.h"
-#include "hardware/structs/watchdog.h"
 
 #include "log.h"
 #include "comm.h"
+#include "util.h"
 
-#define ENTRY_MAGIC 0xb105f00d
-
-#define CMD_SYNC     (('S' << 0) | ('Y' << 8) | ('N' << 16) | ('C' << 24))
-#define CMD_LOGS     (('L' << 0) | ('O' << 8) | ('G' << 16) | ('S' << 24))
 #define CMD_INPUT    (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
-#define CMD_REBOOT   (('B' << 0) | ('O' << 8) | ('O' << 16) | ('T' << 24))
-#define RSP_SYNC_APP (('R' << 0) | ('B' << 8) | ('N' << 16) | ('D' << 24))
 
 #define BTN_BIT_A       0
 #define BTN_BIT_B       1
@@ -51,74 +41,23 @@ struct bt_hid_state {
 	uint8_t pad;
 };
 
-struct log_buffer logger;
-
-static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
-static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
-static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
-static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
-static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
-const struct comm_command cmds[] = {
-	{
-		.opcode = CMD_SYNC,
-		.nargs = 0,
-		.resp_nargs = 0,
-		.size = NULL,
-		.handle = &handle_sync,
-	},
-	{
-		.opcode = CMD_LOGS,
-		.nargs = 0,
-		.resp_nargs = 1,
-		.size = &size_logs,
-		.handle = &handle_logs,
-	},
-	{
+// This list is ordered to try and put the most frequent messages near the start
+const struct comm_command *const cmds[] = {
+	&(const struct comm_command){
 		.opcode = CMD_INPUT,
 		.nargs = 0,
 		.resp_nargs = 0,
 		.size = &size_input,
 		.handle = &handle_input,
 	},
-	{
-		// BOOT to_bootloader
-		// NO RESPONSE
-		.opcode = CMD_REBOOT,
-		.nargs = 1,
-		.resp_nargs = 0,
-		.size = &size_reboot,
-		.handle = &handle_reboot,
-	},
+	&util_sync_cmd,
+	&util_logs_cmd,
+	&util_reboot_cmd,
 };
 const unsigned int N_CMDS = (sizeof(cmds) / sizeof(cmds[0]));
-
-static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
-{
-	return RSP_SYNC_APP;
-}
-
-static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
-{
-	*data_len_out = 0;
-	// TODO: This is an unfortunate limitation of the interface, we don't
-	// know the real response size until we drain the buffer in handle_logs
-	// so we just say we'll use the whole buffer.
-	// This means the transfer will be larger than it needs to be.
-	*resp_data_len_out = COMM_MAX_DATA_LEN;
-
-	return COMM_RSP_OK;
-}
-
-static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
-{
-	uint16_t drained = log_drain(&logger, resp_data_out, COMM_MAX_DATA_LEN);
-	resp_args_out[0] = drained;
-
-	return COMM_RSP_OK;
-}
 
 static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
 {
@@ -167,7 +106,7 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 
 	memcpy(&state, data_in, sizeof(state));
 
-	log_printf(&logger, "L: %2x,%2x R: %2x,%2x, Hat: %1x, Buttons: %04x",
+	log_printf(&util_logger, "L: %2x,%2x R: %2x,%2x, Hat: %1x, Buttons: %04x",
 			state.lx, state.ly, state.rx, state.ry, state.hat, state.buttons);
 
 	if (state.buttons) {
@@ -182,50 +121,12 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 	return COMM_RSP_OK;
 }
 
-static void do_reboot(bool to_bootloader)
-{
-	hw_clear_bits(&watchdog_hw->ctrl, WATCHDOG_CTRL_ENABLE_BITS);
-	if (to_bootloader) {
-		watchdog_hw->scratch[5] = ENTRY_MAGIC;
-		watchdog_hw->scratch[6] = ~ENTRY_MAGIC;
-	} else {
-		watchdog_hw->scratch[5] = 0;
-		watchdog_hw->scratch[6] = 0;
-	}
-
-	// This probably isn't strictly necessary, because the watchdog should
-	// take care of it.
-	multicore_reset_core1();
-
-	watchdog_reboot(0, 0, 0);
-	while (1) {
-		tight_loop_contents();
-		asm("");
-	}
-}
-
-static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
-{
-	*data_len_out = 0;
-	*resp_data_len_out = 0;
-
-	return COMM_RSP_OK;
-}
-
-static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
-{
-	// Will never return
-	do_reboot(args_in[0]);
-
-	return COMM_RSP_ERR;
-}
-
 static void core1_main(void)
 {
 	int i = 0;
 	while (1) {
 		sleep_ms(1000);
-		log_printf(&logger, "From core 1: %d", i++);
+		log_printf(&util_logger, "From core 1: %d", i++);
 	}
 }
 
@@ -234,9 +135,9 @@ int main()
 	gpio_init(PICO_DEFAULT_LED_PIN);
 	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
-	comm_init(cmds, N_CMDS, CMD_SYNC);
+	util_init();
 
-	log_init(&logger);
+	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
 	gpio_set_function(18, GPIO_FUNC_PWM);
 	gpio_set_function(19, GPIO_FUNC_PWM);
@@ -255,7 +156,7 @@ int main()
 
 	int i = 0;
 	while (1) {
-		log_printf(&logger, "From core 0: %d", i++);
+		log_printf(&util_logger, "From core 0: %d", i++);
 		sleep_ms(100);
 	}
 }
