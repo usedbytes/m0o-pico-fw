@@ -56,6 +56,7 @@ const struct comm_command *const cmds[] = {
 	&util_sync_cmd,
 	&util_logs_cmd,
 	&util_reboot_cmd,
+	&util_read_cmd,
 };
 const unsigned int N_CMDS = (sizeof(cmds) / sizeof(cmds[0]));
 

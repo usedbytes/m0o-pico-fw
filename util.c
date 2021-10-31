@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include <stdint.h>
+#include <string.h>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -25,6 +26,8 @@ static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *r
 static uint32_t handle_logs(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+static uint32_t size_read(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
+static uint32_t handle_read(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
 const struct comm_command util_sync_cmd = {
 	.opcode = UTIL_CMD_SYNC,
@@ -50,6 +53,15 @@ const struct comm_command util_reboot_cmd = {
 	.resp_nargs = 0,
 	.size = &size_reboot,
 	.handle = &handle_reboot,
+};
+const struct comm_command util_read_cmd = {
+	// READ addr len
+	// OKOK [data]
+	.opcode = UTIL_CMD_READ,
+	.nargs = 2,
+	.resp_nargs = 0,
+	.size = &size_read,
+	.handle = &handle_read,
 };
 
 static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
@@ -114,6 +126,32 @@ static uint32_t handle_reboot(uint32_t *args_in, uint8_t *data_in, uint32_t *res
 
 	return COMM_RSP_ERR;
 }
+
+static uint32_t size_read(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
+{
+	uint32_t size = args_in[1];
+	if (size > COMM_MAX_DATA_LEN) {
+		return COMM_RSP_ERR;
+	}
+
+	// TODO: Validate address
+
+	*data_len_out = 0;
+	*resp_data_len_out = size;
+
+	return COMM_RSP_OK;
+}
+
+static uint32_t handle_read(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	uint32_t addr = args_in[0];
+	uint32_t size = args_in[1];
+
+	memcpy(resp_data_out, (void *)addr, size);
+
+	return COMM_RSP_OK;
+}
+
 
 void util_init(void)
 {

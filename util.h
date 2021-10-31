@@ -12,10 +12,12 @@
 #define UTIL_CMD_SYNC     (('S' << 0) | ('Y' << 8) | ('N' << 16) | ('C' << 24))
 #define UTIL_CMD_LOGS     (('L' << 0) | ('O' << 8) | ('G' << 16) | ('S' << 24))
 #define UTIL_CMD_REBOOT   (('B' << 0) | ('O' << 8) | ('O' << 16) | ('T' << 24))
+#define UTIL_CMD_READ     (('R' << 0) | ('E' << 8) | ('A' << 16) | ('D' << 24))
 
 extern const struct comm_command util_sync_cmd;
 extern const struct comm_command util_logs_cmd;
 extern const struct comm_command util_reboot_cmd;
+extern const struct comm_command util_read_cmd;
 
 extern struct log_buffer util_logger;
 
