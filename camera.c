@@ -237,10 +237,12 @@ void run_camera(void)
 				while (gpio_get(PIN_PXCLK));
 				while (!gpio_get(PIN_PXCLK));
 				x++;
+				uint32_t pins = gpio_get_all();
 				if (!(x & 1)) {
-					uint32_t pins = gpio_get_all();
 					img[idx] = (pins >> PIN_D0) & 0xff;
 					idx++;
+				} else {
+					img[idx + (IMG_W / 2)] = (pins >> PIN_D0) & 0xff;
 				}
 				//while (gpio_get(PIN_PXCLK));
 			}
