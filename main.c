@@ -121,12 +121,15 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 	return COMM_RSP_OK;
 }
 
+extern void run_camera(void);
+
 static void core1_main(void)
 {
-	int i = 0;
+	run_camera();
+
+	// Should hopefully never reach here.
 	while (1) {
-		sleep_ms(1000);
-		log_printf(&util_logger, "From core 1: %d", i++);
+		tight_loop_contents();
 	}
 }
 
@@ -152,11 +155,13 @@ int main()
 	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_B, 0);
 	pwm_set_enabled(PWM_SLICE_B, true);
 
-	multicore_launch_core1(core1_main);
+	run_camera();
+
+	//multicore_launch_core1(core1_main);
 
 	int i = 0;
 	while (1) {
-		log_printf(&util_logger, "From core 0: %d", i++);
+		//log_printf(&util_logger, "From core 0: %d", i++);
 		sleep_ms(100);
 	}
 }

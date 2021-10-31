@@ -16,6 +16,7 @@ add_executable(rebound
 	log.c
 	comm.c
 	util.c
+	camera.c
 )
 
 pico_add_extra_outputs(rebound)
@@ -24,4 +25,15 @@ set_target_properties(rebound PROPERTIES COMPILE_FLAGS "-Wall")
 
 pico_set_linker_script(rebound ${CMAKE_CURRENT_SOURCE_DIR}/rebound_noboot2.ld)
 
-target_link_libraries(rebound pico_stdlib_headers pico_stdlib hardware_watchdog hardware_structs hardware_uart hardware_dma pico_sync hardware_pwm pico_multicore)
+target_link_libraries(rebound
+	pico_multicore
+	pico_stdlib
+	pico_stdlib_headers
+	pico_sync
+	hardware_i2c
+	hardware_dma
+	hardware_pwm
+	hardware_structs
+	hardware_watchdog
+	hardware_uart
+)
