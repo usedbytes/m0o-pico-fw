@@ -162,6 +162,8 @@ void run_camera(void)
 {
 	// 125 MHz / 5 = 25 MHz
 	clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 5);
+	clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 10);
+	//clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 13);
 
 	i2c_init(i2c0, 100000);
 	gpio_set_function(0, GPIO_FUNC_I2C);
@@ -200,6 +202,47 @@ void run_camera(void)
 
 	ov7670_init();
 
+	PIO pio = pio0;
+	uint sm = 0;
+
+	int chan = dma_claim_unused_channel(true);
+	dma_channel_config c = dma_channel_get_default_config(chan);
+	channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+	channel_config_set_read_increment(&c, false);
+	channel_config_set_write_increment(&c, true);
+	channel_config_set_dreq(&c, pio_get_dreq(pio, sm, false));
+
+	uint offset = pio_add_program(pio, &camera_shiftreg_program);
+	camera_shiftreg_program_init(pio, sm, offset, PIN_D0);
+
+	while (1) {
+		while (!go);
+		go = false;
+		done = false;
+
+		dma_channel_configure(chan,
+				&c,
+				img,
+				&pio->rxf[sm],
+				IMG_W * IMG_H / 4,
+				true);
+
+		log_printf(&util_logger, "Wait vsync");
+		while (!gpio_get(PIN_VSYNC));
+		log_printf(&util_logger, "Got vsync");
+
+		int y;
+		for (y = 0; y < IMG_H; y++) {
+			log_printf(&util_logger, "Put line %d", y);
+			pio_sm_put_blocking(pio, sm, IMG_W - 1);
+		}
+
+		dma_channel_wait_for_finish_blocking(chan);
+		done = true;
+		log_printf(&util_logger, "Frame done");
+	}
+
+#if 0
 	PIO pio = pio0;
 	uint sm = 0;
 	uint offset = pio_add_program(pio, &camera_frame_program);
@@ -247,6 +290,7 @@ void run_camera(void)
 
 		log_printf(&util_logger, "Frame done");
 	}
+#endif
 
 #if 0
 	while (!gpio_get(PIN_VSYNC));
