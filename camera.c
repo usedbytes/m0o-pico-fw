@@ -60,6 +60,7 @@ const struct comm_command snapget_cmd = {
 static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	go = true;
+	done = false;
 
 	return COMM_RSP_OK;
 }
@@ -207,40 +208,37 @@ void run_camera(void)
 	ov7670_init();
 
 	PIO pio = pio0;
-	uint sm = 0;
+	uint frame_sm = 0;
+	uint data_sm = 1;
 
 	int chan = dma_claim_unused_channel(true);
 	dma_channel_config c = dma_channel_get_default_config(chan);
 	channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
 	channel_config_set_read_increment(&c, false);
 	channel_config_set_write_increment(&c, true);
-	channel_config_set_dreq(&c, pio_get_dreq(pio, sm, false));
+	channel_config_set_dreq(&c, pio_get_dreq(pio, data_sm, false));
 
-	uint offset = pio_add_program(pio, &camera_shiftreg_program);
-	camera_shiftreg_program_init(pio, sm, offset, PIN_D0);
+	uint offset = pio_add_program(pio, &camera_shift_byte_program);
+	camera_shift_byte_program_init(pio, data_sm, offset, PIN_D0);
+	offset = pio_add_program(pio, &camera_frame_oneplane_program);
+	camera_frame_oneplane_program_init(pio, frame_sm, offset, PIN_D0);
 
 	while (1) {
 		while (!go);
 		go = false;
-		done = false;
 
 		dma_channel_configure(chan,
 				&c,
 				img,
-				&pio->rxf[sm],
+				&pio->rxf[data_sm],
 				IMG_W * IMG_H / 4,
 				true);
 
-		log_printf(&util_logger, "Wait vsync");
-		while (!gpio_get(PIN_VSYNC));
-		log_printf(&util_logger, "Got vsync");
+		log_printf(&util_logger, "Start frame");
+		pio_sm_put_blocking(pio, frame_sm, IMG_H - 1);
+		pio_sm_put_blocking(pio, frame_sm, IMG_W - 1);
 
-		int y;
-		for (y = 0; y < IMG_H; y++) {
-			log_printf(&util_logger, "Put line %d", y);
-			pio_sm_put_blocking(pio, sm, IMG_W - 1);
-		}
-
+		log_printf(&util_logger, "Waiting");
 		dma_channel_wait_for_finish_blocking(chan);
 		done = true;
 		log_printf(&util_logger, "Frame done");

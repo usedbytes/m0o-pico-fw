@@ -4,6 +4,13 @@
 ; SPDX-License-Identifier: BSD-3-Clause
 ;
 
+.define PUBLIC PIN_OFFS_D0       0
+.define PUBLIC PIN_OFFS_CLK_INH  1
+.define PUBLIC PIN_OFFS_VSYNC    2
+.define PUBLIC PIN_OFFS_HREF     3
+.define PUBLIC PIN_OFFS_PXCLK    4
+.define PUBLIC GPIO_XCLK         21
+
 .program camera_frame
 
 .wrap_target
@@ -61,12 +68,6 @@ static inline void camera_do_frame(PIO pio, uint sm, uint32_t width, uint32_t he
 %}
 
 .program camera_shiftreg
-.define PUBLIC PIN_OFFS_D0       0
-.define PUBLIC PIN_OFFS_CLK_INH  1
-.define PUBLIC PIN_OFFS_VSYNC    2
-.define PUBLIC PIN_OFFS_HREF     3
-.define PUBLIC PIN_OFFS_PXCLK    4
-.define PUBLIC GPIO_XCLK         21
 
 .side_set 1 opt
 
@@ -93,7 +94,7 @@ wait 0 pin PIN_OFFS_HREF        ; Wait for HREF to go low
 static inline void camera_shiftreg_program_init(PIO pio, uint sm, uint offset, uint base_pin)
 {
     pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
-    pio_sm_set_consecutive_pindirs(pio, sm, base_pin + camera_shiftreg_PIN_OFFS_CLK_INH, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK_INH, 1, true);
     for (uint i = 0; i < 5; i++) {
         pio_gpio_init(pio, i + base_pin);
     }
@@ -102,7 +103,85 @@ static inline void camera_shiftreg_program_init(PIO pio, uint sm, uint offset, u
     sm_config_set_in_pins(&c, base_pin);
     sm_config_set_in_shift(&c, true, true, 32);
     sm_config_set_out_shift(&c, true, false, 0);
-    sm_config_set_sideset_pins(&c, base_pin + camera_shiftreg_PIN_OFFS_CLK_INH);
+    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+.program camera_shift_byte
+.side_set 1 opt
+
+.wrap_target
+set X 7                                 ; Load the bit counter
+wait 1 irq 0                            ; Wait to be triggered
+wait 1 pin PIN_OFFS_PXCLK side 0x1      ; Wait for PXCLK to go high, set CLK_INH
+wait 1 gpio GPIO_XCLK                   ; Wait for CLK to go high (before clearing INH)
+
+loop_bit:
+wait 0 gpio GPIO_XCLK side 0x0          ; Wait for CLK to go low, clear CLK_INH
+wait 1 gpio GPIO_XCLK                   ; Wait for CLK to go high
+in PINS 1                               ; Grab a bit of data
+jmp x-- loop_bit
+
+wait 0 pin PIN_OFFS_PXCLK side 0x1      ; Wait for PXCLK to go low, set CLK_INH
+.wrap
+
+% c-sdk {
+static inline void camera_shift_byte_program_init(PIO pio, uint sm, uint offset, uint base_pin)
+{
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK_INH, 1, true);
+    for (uint i = 0; i < 5; i++) {
+        pio_gpio_init(pio, i + base_pin);
+    }
+
+    pio_sm_config c = camera_shift_byte_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, base_pin);
+    sm_config_set_in_shift(&c, true, true, 32);
+    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
+    pio_sm_init(pio, sm, offset, &c);
+
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}
+
+.program camera_frame_oneplane
+.side_set 1 opt
+
+.wrap_target
+pull                                   ; Pull number of lines (note: used for synchronisation)
+out Y, 32                              ; Store number of lines in Y
+pull                                   ; Pull "pixels" per line. Keep this in OSR to reload X each line
+
+wait 1 pin PIN_OFFS_VSYNC side 0x1     ; Wait for start of frame, set initial CLK_INH
+
+loop_line:
+mov X, OSR                             ; Store number of "pixels" in X
+wait 1 pin PIN_OFFS_HREF [2]  side 0x1 ; Wait for start of line
+
+loop_pixel:
+irq wait 0                             ; Trigger the "pixel" SM, unblock when it starts
+jmp x-- loop_pixel
+
+wait 0 pin PIN_OFFS_HREF               ; Wait for end of line
+jmp y-- loop_line
+.wrap
+
+% c-sdk {
+static inline void camera_frame_oneplane_program_init(PIO pio, uint sm, uint offset, uint base_pin)
+{
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK_INH, 1, true);
+    for (uint i = 0; i < 5; i++) {
+        pio_gpio_init(pio, i + base_pin);
+    }
+
+    pio_sm_config c = camera_frame_oneplane_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, base_pin);
+    sm_config_set_out_shift(&c, true, false, 0);
+    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
     pio_sm_init(pio, sm, offset, &c);
 
     pio_sm_set_enabled(pio, sm, true);
