@@ -13,8 +13,8 @@
 
 #include "comm.h"
 
-#define UART_TX_PIN 17
-#define UART_RX_PIN 16
+#define UART_TX_PIN 0
+#define UART_RX_PIN 1
 #define UART_BAUD   921600
 
 #define COMM_BUF_OPCODE(_buf)       ((uint32_t *)((uint8_t *)(_buf)))

@@ -61,26 +61,32 @@ static inline void camera_do_frame(PIO pio, uint sm, uint32_t width, uint32_t he
 %}
 
 .program camera_shiftreg
+.define PIN_D0       16
+.define PIN_CLK_INH  17
+.define PIN_VSYNC    18
+.define PIN_HREF     19
+.define PIN_PXCLK    20
+.define PIN_XCLK     21
 
 .side_set 1 opt
 
 .wrap_target
 pull
 out Y, 32
-wait 1 gpio 3 [2]  side 0x1 ; Wait for HSYNC to go high, side set CLK_INH
+wait 1 gpio PIN_HREF [2]  side 0x1 ; Wait for HREF to go high, side set CLK_INH
 
 loop_pixel:
-wait 1 gpio 4              ; Wait for PXCLK to go high
-wait 1 gpio 21             ; Wait for CLK to go high
+wait 1 gpio PIN_PXCLK          ; Wait for PXCLK to go high
+wait 1 gpio PIN_XCLK           ; Wait for CLK to go high
 set X 7
 loop_bit:
-	wait 0 gpio 21 side 0x0    ; Wait for CLK to go low, clear CLK_INH
-	wait 1 gpio 21             ; Wait for CLK to go high
-	in PINS 1                  ; Grab a bit of data
+	wait 0 gpio PIN_XCLK side 0x0    ; Wait for CLK to go low, clear CLK_INH
+	wait 1 gpio PIN_XCLK             ; Wait for CLK to go high
+	in PINS 1                        ; Grab a bit of data
 	jmp x-- loop_bit
-wait 0 gpio 21 side 0x1    ; Wait for PXCLK to go low, set CLK_INH
+wait 0 gpio PIN_XCLK side 0x1  ; Wait for PXCLK to go low, set CLK_INH
 jmp y-- loop_pixel
-wait 0 gpio 3              ; Wait for HSYNC to go low
+wait 0 gpio PIN_HREF           ; Wait for HREF to go low
 .wrap
 
 % c-sdk {

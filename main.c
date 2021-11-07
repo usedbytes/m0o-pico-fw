@@ -73,8 +73,12 @@ static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *
 	return COMM_RSP_OK;
 }
 
-#define PWM_SLICE_A 1
-#define PWM_SLICE_B 5
+#define PWM_SLICE_A   5
+#define MOTOR_PIN_A_A 10
+#define MOTOR_PIN_A_B 11
+#define PWM_SLICE_B 6
+#define MOTOR_PIN_B_A 12
+#define MOTOR_PIN_B_B 13
 #define PWM_MAX (127)
 #define PWM_MIN (PWM_MAX - 127)
 
@@ -148,14 +152,14 @@ int main()
 
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
-	gpio_set_function(18, GPIO_FUNC_PWM);
-	gpio_set_function(19, GPIO_FUNC_PWM);
+	gpio_set_function(MOTOR_PIN_A_A, GPIO_FUNC_PWM);
+	gpio_set_function(MOTOR_PIN_A_B, GPIO_FUNC_PWM);
 	pwm_set_wrap(PWM_SLICE_A, PWM_MAX + 1);
 	pwm_set_chan_level(PWM_SLICE_A, PWM_CHAN_A, 0);
 	pwm_set_chan_level(PWM_SLICE_A, PWM_CHAN_B, 0);
 	pwm_set_enabled(PWM_SLICE_A, true);
-	gpio_set_function(26, GPIO_FUNC_PWM);
-	gpio_set_function(27, GPIO_FUNC_PWM);
+	gpio_set_function(MOTOR_PIN_B_A, GPIO_FUNC_PWM);
+	gpio_set_function(MOTOR_PIN_B_B, GPIO_FUNC_PWM);
 	pwm_set_wrap(PWM_SLICE_B, PWM_MAX + 1);
 	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_A, 0);
 	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_B, 0);
