@@ -32,7 +32,7 @@ wait 0 pin PIN_OFFS_PXCLK side 0x1      ; Wait for PXCLK to go low, set CLK_INH
 .wrap
 
 % c-sdk {
-static inline void camera_shift_byte_program_init(PIO pio, uint sm, uint offset, uint base_pin)
+static inline void camera_shift_byte_program_init(PIO pio, uint sm, uint offset, uint base_pin, uint bpp)
 {
     pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
     pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK_INH, 1, true);
@@ -42,7 +42,7 @@ static inline void camera_shift_byte_program_init(PIO pio, uint sm, uint offset,
 
     pio_sm_config c = camera_shift_byte_program_get_default_config(offset);
     sm_config_set_in_pins(&c, base_pin);
-    sm_config_set_in_shift(&c, true, true, 32);
+    sm_config_set_in_shift(&c, true, true, bpp);
     sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
     pio_sm_init(pio, sm, offset, &c);
 

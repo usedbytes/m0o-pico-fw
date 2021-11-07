@@ -219,7 +219,7 @@ void run_camera(void)
 	channel_config_set_dreq(&c, pio_get_dreq(pio, data_sm, false));
 
 	uint offset = pio_add_program(pio, &camera_shift_byte_program);
-	camera_shift_byte_program_init(pio, data_sm, offset, PIN_D0);
+	camera_shift_byte_program_init(pio, data_sm, offset, PIN_D0, 32);
 	offset = pio_add_program(pio, &camera_frame_oneplane_program);
 	camera_frame_oneplane_program_init(pio, frame_sm, offset, PIN_D0);
 
