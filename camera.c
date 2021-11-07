@@ -165,10 +165,10 @@ void run_camera(void)
 {
 	log_printf(&util_logger, "run_camera()");
 
-	// 125 MHz / 5 = 25 MHz
-	//clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 5);
+	// 125 MHz / 10 = 12.5 MHz
+	// Any higher doesn't work - either the shift register isn't fast enough
+	// or the PIO program isn't
 	clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 10);
-	//clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 13);
 
 	i2c_init(i2c1, 100000);
 	gpio_set_function(14, GPIO_FUNC_I2C);
