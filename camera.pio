@@ -11,12 +11,14 @@
 .define PUBLIC PIN_OFFS_PXCLK    4
 .define PUBLIC GPIO_XCLK         21
 
+.define BYTE_IRQ_BASE            4
+
 .program camera_shift_byte
 .side_set 1 opt
 
 .wrap_target
 set X 7                                 ; Load the bit counter
-wait 1 irq 0                            ; Wait to be triggered
+wait 1 irq 4 rel                        ; Wait to be triggered - waits for IRQ 4 + SM number
 wait 1 pin PIN_OFFS_PXCLK side 0x1      ; Wait for PXCLK to go high, set CLK_INH
 wait 1 gpio GPIO_XCLK                   ; Wait for CLK to go high (before clearing INH)
 
@@ -59,11 +61,21 @@ pull                                   ; Pull "pixels" per line. Keep this in OS
 wait 1 pin PIN_OFFS_VSYNC side 0x1     ; Wait for start of frame, set initial CLK_INH
 
 loop_line:
-mov X, OSR                             ; Store number of "pixels" in X
+mov X, OSR                             ; Store number of pixels in X
 wait 1 pin PIN_OFFS_HREF [2]  side 0x1 ; Wait for start of line
 
-loop_pixel:
-irq wait 0                             ; Trigger the "pixel" SM, unblock when it starts
+; The pixel loop body can be patched for different pixel formats / plane
+; layouts. Up to 4 bytes per pixel.
+; For a format with less than 4 bytes per pixel, some of these commands will
+; be patched to NOPs. For multi-plane formats, other SMs will be triggered
+; as appropriate
+; By default, this is set up for 4-bytes per pixel, in a single plane,
+; handled by SM1
+public loop_pixel:
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 1)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 3)
 jmp x-- loop_pixel
 
 wait 0 pin PIN_OFFS_HREF               ; Wait for end of line
@@ -88,3 +100,27 @@ static inline void camera_frame_oneplane_program_init(PIO pio, uint sm, uint off
     pio_sm_set_enabled(pio, sm, true);
 }
 %}
+
+.program pixel_loop_yuyv
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 1)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 3)
+
+.program pixel_loop_rgb565
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 1)
+nop
+nop
+
+.program pixel_loop_nv16
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
+irq wait (BYTE_IRQ_BASE + 2)           ; Trigger byte SM2 (byte 1)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
+irq wait (BYTE_IRQ_BASE + 2)           ; Trigger byte SM2 (byte 3)
+
+.program pixel_loop_yu16
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
+irq wait (BYTE_IRQ_BASE + 2)           ; Trigger byte SM2 (byte 1)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
+irq wait (BYTE_IRQ_BASE + 3)           ; Trigger byte SM3 (byte 3)

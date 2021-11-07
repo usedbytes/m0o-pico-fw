@@ -236,7 +236,7 @@ void run_camera(void)
 
 		log_printf(&util_logger, "Start frame");
 		pio_sm_put_blocking(pio, frame_sm, IMG_H - 1);
-		pio_sm_put_blocking(pio, frame_sm, IMG_W - 1);
+		pio_sm_put_blocking(pio, frame_sm, (IMG_W / 4) - 1);
 
 		log_printf(&util_logger, "Waiting");
 		dma_channel_wait_for_finish_blocking(chan);
