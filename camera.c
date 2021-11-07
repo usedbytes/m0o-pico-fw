@@ -20,12 +20,10 @@
 
 #include "camera.pio.h"
 
+#define I2C_BUS      i2c1
+#define I2C_PIN_SDA  14
+#define I2C_PIN_SCL  15
 #define PIN_D0       16
-#define PIN_CLK_INH  17
-#define PIN_VSYNC    18
-#define PIN_HREF     19
-#define PIN_PXCLK    20
-#define PIN_XCLK     21
 
 #define IMG_W 160
 #define IMG_H 72
@@ -88,7 +86,7 @@ static int ov7670_write(uint8_t addr, uint8_t value) {
 
 	data[0] = addr;
 	data[1] = value;
-	ret = i2c_write_blocking(i2c1, OV7670_ADDR, data, 2, false);
+	ret = i2c_write_blocking(I2C_BUS, OV7670_ADDR, data, 2, false);
 	if (ret != 2) {
 		log_printf(&util_logger, "ov7670_write 0x%02x %d: %d", addr, value, ret);
 		return -1;
@@ -98,13 +96,13 @@ static int ov7670_write(uint8_t addr, uint8_t value) {
 }
 
 static int ov7670_read(uint8_t addr, uint8_t *value) {
-	int ret = i2c_write_blocking(i2c1, OV7670_ADDR, &addr, 1, false);
+	int ret = i2c_write_blocking(I2C_BUS, OV7670_ADDR, &addr, 1, false);
 	if (ret != 1) {
 		log_printf(&util_logger, "ov7670_read W 0x%02x 1: %d", addr, ret);
 		return -1;
 	}
 
-	ret = i2c_read_blocking(i2c1, OV7670_ADDR, value, 1, false);
+	ret = i2c_read_blocking(I2C_BUS, OV7670_ADDR, value, 1, false);
 	if (ret != 1) {
 		log_printf(&util_logger, "ov7670_read R 0x%02x 1: %d", addr, ret);
 		return -2;
@@ -168,15 +166,13 @@ void run_camera(void)
 	// 125 MHz / 10 = 12.5 MHz
 	// Any higher doesn't work - either the shift register isn't fast enough
 	// or the PIO program isn't
-	clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 10);
+	clock_gpio_init(GPIO_XCLK, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 10);
 
-	i2c_init(i2c1, 100000);
-	gpio_set_function(14, GPIO_FUNC_I2C);
-	gpio_set_function(15, GPIO_FUNC_I2C);
-	gpio_pull_up(14);
-	gpio_pull_up(15);
-
-	gpio_set_dir_in_masked((0xff << PIN_D0) | (0x7 << PIN_VSYNC));
+	i2c_init(I2C_BUS, 100000);
+	gpio_set_function(I2C_PIN_SDA, GPIO_FUNC_I2C);
+	gpio_set_function(I2C_PIN_SCL, GPIO_FUNC_I2C);
+	gpio_pull_up(I2C_PIN_SDA);
+	gpio_pull_up(I2C_PIN_SCL);
 
 	int ret;
 	uint8_t val = 0;
