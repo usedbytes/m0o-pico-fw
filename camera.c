@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -28,8 +29,265 @@
 #define IMG_W 160
 #define IMG_H 72
 
+#define CAMERA_PIO           pio0
+#define CAMERA_PIO_FRAME_SM  0
+#define CAMERA_DMA_CHAN_BASE 0
+#define CAMERA_MAX_N_PLANES  1
+
 #define CMD_SNAP    (('S' << 0) | ('N' << 8) | ('A' << 16) | ('P' << 24))
 #define CMD_SNAPGET (('S' << 0) | ('G' << 8) | ('E' << 16) | ('T' << 24))
+
+#define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
+
+struct camera_buffer {
+	uint32_t format;
+	uint16_t width;
+	uint16_t height;
+	uint8_t *data[3];
+};
+
+struct camera_buffer *cam_buf;
+
+static uint8_t format_num_planes(uint32_t format)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static uint8_t format_bytes_per_pixel(uint32_t format, uint8_t plane)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return 4;
+	default:
+		return 0;
+	}
+}
+
+static enum dma_channel_transfer_size format_transfer_size(uint32_t format, uint8_t plane)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return DMA_SIZE_32;
+	default:
+		return 0;
+	}
+}
+
+static uint8_t __dma_transfer_size_to_bytes(enum dma_channel_transfer_size dma)
+{
+	switch (dma) {
+	case DMA_SIZE_8:
+		return 1;
+	case DMA_SIZE_16:
+		return 2;
+	case DMA_SIZE_32:
+		return 4;
+	}
+
+	return 0;
+}
+
+static uint8_t format_hsub(uint32_t format, uint8_t plane)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return 1;
+	default:
+		return 0;
+	}
+}
+
+static uint32_t format_plane_size(uint32_t format, uint8_t plane, uint16_t width, uint16_t height)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return format_bytes_per_pixel(format, plane) * width * height / format_hsub(format, plane);
+	default:
+		return 0;
+	}
+}
+
+static struct camera_buffer *camera_buffer_alloc(uint32_t format, uint16_t width, uint16_t height)
+{
+	struct camera_buffer *buf = malloc(sizeof(*buf));
+	if (!buf) {
+		return NULL;
+	}
+
+	*buf = (struct camera_buffer){
+		.format = format,
+		.width = width,
+		.height = height,
+	};
+
+	uint8_t num_planes = format_num_planes(format);
+	for (int i = 0; i < num_planes; i++) {
+		buf->data[i] = malloc(format_plane_size(format, i, width, height));
+		if (!buf->data[i]) {
+			goto error;
+		}
+	}
+
+	return buf;
+
+error:
+	for (int i = 0; i < num_planes; i++) {
+		if (!buf->data[i]) {
+			free(buf->data[i]);
+		}
+	}
+	free(buf);
+	return NULL;
+}
+
+struct camera_config {
+	uint32_t format;
+	uint16_t width;
+	uint16_t height;
+	uint dma_transfers[3];
+	dma_channel_config dma_cfgs[3];
+	pio_sm_config sm_cfgs[4];
+};
+
+struct camera {
+	PIO pio;
+	uint frame_offset;
+	uint shift_byte_offset;
+	int dma_channels[3];
+
+	struct camera_config *config;
+};
+
+static void camera_pio_init(struct camera *camera)
+{
+	camera->shift_byte_offset = pio_add_program(camera->pio, &camera_shift_byte_program);
+	for (int i = 1; i < 4; i++) {
+		camera_pio_init_gpios(camera->pio, i, PIN_D0);
+	}
+
+	camera->frame_offset = pio_add_program(camera->pio, &camera_frame_oneplane_program);
+	camera_pio_init_gpios(camera->pio, CAMERA_PIO_FRAME_SM, PIN_D0);
+}
+
+static void camera_pio_configure(struct camera *camera, struct camera_config *config)
+{
+	// First disable everything
+	pio_set_sm_mask_enabled(camera->pio, 0xf, false);
+
+	// Then reset everything
+	pio_restart_sm_mask(camera->pio, 0xf);
+
+	// Drain the FIFOs
+	for (int i = 0; i < 4; i++) {
+		pio_sm_clear_fifos(camera->pio, i);
+	}
+
+	// TODO: Patch the pixel loop
+
+	// Finally we can configure and enable the state machines
+	uint8_t num_planes = format_num_planes(config->format);
+	for (int i = 0; i < num_planes; i++) {
+		pio_sm_init(camera->pio, i + 1, camera->shift_byte_offset, &config->sm_cfgs[i + 1]);
+		pio_sm_set_enabled(camera->pio, i + 1, true);
+	}
+
+	pio_sm_init(camera->pio, CAMERA_PIO_FRAME_SM, camera->frame_offset, &config->sm_cfgs[CAMERA_PIO_FRAME_SM]);
+	pio_sm_set_enabled(camera->pio, CAMERA_PIO_FRAME_SM, true);
+}
+
+static void camera_config_init(struct camera *camera, struct camera_config *config,
+			uint32_t format, uint16_t width, uint16_t height)
+{
+	config->format = format;
+	config->width = width;
+	config->height = height;
+
+	config->sm_cfgs[CAMERA_PIO_FRAME_SM] =
+		camera_pio_get_frame_sm_config(camera->pio, CAMERA_PIO_FRAME_SM, camera->frame_offset, PIN_D0);
+
+	uint8_t num_planes = format_num_planes(format);
+	for (int i = 0; i < num_planes; i++) {
+		dma_channel_config c = dma_channel_get_default_config(camera->dma_channels[i]);
+		channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+		channel_config_set_read_increment(&c, false);
+		channel_config_set_write_increment(&c, true);
+		channel_config_set_dreq(&c, pio_get_dreq(camera->pio, i + 1, false));
+
+		config->dma_cfgs[i] = c;
+		config->dma_transfers[i] = format_plane_size(format, i, width, height) /
+						__dma_transfer_size_to_bytes(format_transfer_size(format, i)),
+
+		config->sm_cfgs[i + 1] = camera_pio_get_pixel_sm_config(camera->pio, i + 1,
+							camera->shift_byte_offset, PIN_D0,
+							format_bytes_per_pixel(config->format, i) * 8);
+	}
+}
+
+static void camera_set_config(struct camera *camera, struct camera_config *config)
+{
+	if (camera->config != NULL) {
+		// TODO: Teardown old config?
+	}
+
+	camera->config = config;
+	camera_pio_configure(camera, config);
+}
+
+static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
+{
+	// XXX: i2c, ov7670 init etc.
+
+	dma_claim_mask(((1 << CAMERA_MAX_N_PLANES) - 1) << base_dma_chan);
+	for (int i = 0; i < CAMERA_MAX_N_PLANES; i++) {
+		camera->dma_channels[i] = base_dma_chan + i;
+	}
+	camera->pio = pio;
+	camera_pio_init(camera);
+}
+
+static void camera_do_frame(struct camera *camera, struct camera_buffer *buf)
+{
+	if (camera->config == NULL) {
+		return;
+	}
+
+	struct camera_config *config = camera->config;
+	if (config->format != buf->format) {
+		return;
+	}
+
+	uint8_t num_planes = format_num_planes(config->format);
+	for (int i = 0; i < num_planes; i++) {
+		dma_channel_configure(camera->dma_channels[i],
+				&config->dma_cfgs[i],
+				buf->data[i],
+				&camera->pio->rxf[i + 1],
+				config->dma_transfers[i],
+				true);
+	}
+
+	pio_sm_put_blocking(camera->pio, CAMERA_PIO_FRAME_SM, buf->height - 1);
+	pio_sm_put_blocking(camera->pio, CAMERA_PIO_FRAME_SM, buf->width - 1);
+}
+
+static void camera_wait_for_completion(struct camera *camera)
+{
+	if (camera->config == NULL) {
+		return;
+	}
+
+	struct camera_config *config = camera->config;
+
+	uint8_t num_planes = format_num_planes(config->format);
+	for (int i = 0; i < num_planes; i++) {
+		dma_channel_wait_for_finish_blocking(camera->dma_channels[i]);
+	}
+}
 
 uint8_t img[IMG_W * IMG_H] __attribute__ ((aligned (4)));
 volatile bool go = false;
@@ -68,8 +326,9 @@ static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *re
 	if (done) {
 		resp_args_out[0] = IMG_W;
 		resp_args_out[1] = IMG_H;
-		resp_args_out[2] = (uint32_t)img;
-		resp_args_out[3] = sizeof(img);
+		resp_args_out[2] = (uint32_t)cam_buf->data[0];
+		resp_args_out[3] = (IMG_W * IMG_H * 4);
+		log_printf(&util_logger, "%d %d %p %d", resp_args_out[0], resp_args_out[1], resp_args_out[2], resp_args_out[3]);
 	} else {
 		resp_args_out[0] = 0;
 		resp_args_out[1] = 0;
@@ -203,6 +462,18 @@ void run_camera(void)
 
 	ov7670_init();
 
+	struct camera camera = { 0 };
+	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
+
+	struct camera_config config = { 0 };
+	camera_config_init(&camera, &config, FORMAT_YUYV, 40, 72);
+
+	camera_set_config(&camera, &config);
+
+	cam_buf = camera_buffer_alloc(FORMAT_YUYV, 40, 72);
+	assert(cam_buf);
+
+#if 0
 	PIO pio = pio0;
 	uint frame_sm = 0;
 	uint data_sm = 1;
@@ -218,11 +489,19 @@ void run_camera(void)
 	camera_shift_byte_program_init(pio, data_sm, offset, PIN_D0, 32);
 	offset = pio_add_program(pio, &camera_frame_oneplane_program);
 	camera_frame_oneplane_program_init(pio, frame_sm, offset, PIN_D0);
+#endif
 
 	while (1) {
 		while (!go);
 		go = false;
 
+		log_printf(&util_logger, "Start frame");
+		camera_do_frame(&camera, cam_buf);
+		log_printf(&util_logger, "Waiting");
+		camera_wait_for_completion(&camera);
+		done = true;
+		log_printf(&util_logger, "Frame done");
+#if 0
 		dma_channel_configure(chan,
 				&c,
 				img,
@@ -238,5 +517,6 @@ void run_camera(void)
 		dma_channel_wait_for_finish_blocking(chan);
 		done = true;
 		log_printf(&util_logger, "Frame done");
+#endif
 	}
 }

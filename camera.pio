@@ -48,6 +48,16 @@ static inline void camera_shift_byte_program_init(PIO pio, uint sm, uint offset,
 
     pio_sm_set_enabled(pio, sm, true);
 }
+
+static inline pio_sm_config camera_pio_get_pixel_sm_config(PIO pio, uint sm, uint offset, uint base_pin, uint bpp)
+{
+    pio_sm_config c = camera_shift_byte_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, base_pin);
+    sm_config_set_in_shift(&c, true, true, bpp);
+    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
+
+    return c;
+}
 %}
 
 .program camera_frame_oneplane
@@ -83,6 +93,15 @@ jmp y-- loop_line
 .wrap
 
 % c-sdk {
+static inline void camera_pio_init_gpios(PIO pio, uint sm, uint base_pin)
+{
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK_INH, 1, true);
+    for (uint i = 0; i < 5; i++) {
+        pio_gpio_init(pio, i + base_pin);
+    }
+}
+
 static inline void camera_frame_oneplane_program_init(PIO pio, uint sm, uint offset, uint base_pin)
 {
     pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
@@ -98,6 +117,16 @@ static inline void camera_frame_oneplane_program_init(PIO pio, uint sm, uint off
     pio_sm_init(pio, sm, offset, &c);
 
     pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline pio_sm_config camera_pio_get_frame_sm_config(PIO pio, uint sm, uint offset, uint base_pin)
+{
+    pio_sm_config c = camera_frame_oneplane_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, base_pin);
+    sm_config_set_out_shift(&c, true, false, 0);
+    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
+
+    return c;
 }
 %}
 
