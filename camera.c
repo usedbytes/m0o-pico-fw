@@ -81,7 +81,7 @@ static uint8_t format_bytes_per_pixel(uint32_t format, uint8_t plane)
 {
 	switch (format) {
 	case FORMAT_YUYV:
-		return 4;
+		return 2;
 	default:
 		return 0;
 	}
@@ -179,12 +179,10 @@ error:
 static void camera_pio_init(struct camera *camera)
 {
 	camera->shift_byte_offset = pio_add_program(camera->pio, &camera_shift_byte_program);
-	for (int i = 1; i < 4; i++) {
+	camera->frame_offset = pio_add_program(camera->pio, &camera_frame_oneplane_program);
+	for (int i = 0; i < 4; i++) {
 		camera_pio_init_gpios(camera->pio, i, PIN_D0);
 	}
-
-	camera->frame_offset = pio_add_program(camera->pio, &camera_frame_oneplane_program);
-	camera_pio_init_gpios(camera->pio, CAMERA_PIO_FRAME_SM, PIN_D0);
 }
 
 static void camera_pio_configure(struct camera *camera)
@@ -226,19 +224,21 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 
 	uint8_t num_planes = format_num_planes(format);
 	for (int i = 0; i < num_planes; i++) {
+		enum dma_channel_transfer_size xfer_size = format_transfer_size(format, i);
 		dma_channel_config c = dma_channel_get_default_config(camera->dma_channels[i]);
-		channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+		channel_config_set_transfer_data_size(&c, xfer_size);
 		channel_config_set_read_increment(&c, false);
 		channel_config_set_write_increment(&c, true);
 		channel_config_set_dreq(&c, pio_get_dreq(camera->pio, i + 1, false));
 
 		camera->config.dma_cfgs[i] = c;
-		camera->config.dma_transfers[i] = format_plane_size(format, i, width, height) /
-						__dma_transfer_size_to_bytes(format_transfer_size(format, i)),
+
+		uint8_t xfer_bytes = __dma_transfer_size_to_bytes(xfer_size);
+		camera->config.dma_transfers[i] = format_plane_size(format, i, width, height) / xfer_bytes,
 
 		camera->config.sm_cfgs[i + 1] = camera_pio_get_pixel_sm_config(camera->pio, i + 1,
 							camera->shift_byte_offset, PIN_D0,
-							format_bytes_per_pixel(camera->config.format, i) * 8);
+							xfer_bytes * 8);
 	}
 
 	camera_pio_configure(camera);
@@ -295,6 +295,7 @@ volatile bool done = false;
 
 static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+static uint32_t size_snapget(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 
 const struct comm_command snap_cmd = {
 	.opcode = CMD_SNAP,
@@ -308,8 +309,8 @@ const struct comm_command snapget_cmd = {
 	// SGET w h addr size
 	.opcode = CMD_SNAPGET,
 	.nargs = 0,
-	.resp_nargs = 4,
-	.size = NULL,
+	.resp_nargs = 0,
+	.size = &size_snapget,
 	.handle = &handle_snapget,
 };
 
@@ -321,18 +322,20 @@ static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_
 	return COMM_RSP_OK;
 }
 
+static uint32_t size_snapget(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
+{
+	*data_len_out = 0;
+	*resp_data_len_out = sizeof(struct camera_buffer);
+
+	return COMM_RSP_OK;
+}
+
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	if (done) {
-		resp_args_out[0] = IMG_W;
-		resp_args_out[1] = IMG_H;
-		resp_args_out[2] = (uint32_t)cam_buf->data[0];
-		resp_args_out[3] = (IMG_W * IMG_H * 4);
+		memcpy(resp_data_out, cam_buf, sizeof(*cam_buf));
 	} else {
-		resp_args_out[0] = 0;
-		resp_args_out[1] = 0;
-		resp_args_out[2] = 0;
-		resp_args_out[3] = 0;
+		memset(resp_data_out, 0, sizeof(*cam_buf));
 	}
 
 	return COMM_RSP_OK;
@@ -464,9 +467,9 @@ void run_camera(void)
 	struct camera camera;
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
 
-	camera_configure(&camera, FORMAT_YUYV, 40, 72);
+	camera_configure(&camera, FORMAT_YUYV, 80, 72);
 
-	cam_buf = camera_buffer_alloc(FORMAT_YUYV, 40, 72);
+	cam_buf = camera_buffer_alloc(FORMAT_YUYV, 80, 72);
 	assert(cam_buf);
 
 	while (1) {

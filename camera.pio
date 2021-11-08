@@ -79,13 +79,13 @@ wait 1 pin PIN_OFFS_HREF [2]  side 0x1 ; Wait for start of line
 ; For a format with less than 4 bytes per pixel, some of these commands will
 ; be patched to NOPs. For multi-plane formats, other SMs will be triggered
 ; as appropriate
-; By default, this is set up for 4-bytes per pixel, in a single plane,
+; By default, this is set up for 2-bytes per pixel, in a single plane,
 ; handled by SM1
 public loop_pixel:
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 1)
-irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
-irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 3)
+nop
+nop
 jmp x-- loop_pixel
 
 wait 0 pin PIN_OFFS_HREF               ; Wait for end of line
@@ -133,8 +133,8 @@ static inline pio_sm_config camera_pio_get_frame_sm_config(PIO pio, uint sm, uin
 .program pixel_loop_yuyv
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 1)
-irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
-irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 3)
+nop
+nop
 
 .program pixel_loop_rgb565
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
