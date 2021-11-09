@@ -39,6 +39,10 @@
 
 #define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
 
+static int ov7670_write(uint8_t addr, uint8_t value);
+static int ov7670_read(uint8_t addr, uint8_t *value);
+static int ov7670_init(void);
+
 struct camera_buffer {
 	uint32_t format;
 	uint16_t width;
@@ -258,7 +262,7 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 
 static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
 {
-	// XXX: i2c, ov7670 init etc.
+	ov7670_init();
 
 	*camera = (struct camera){ 0 };
 
@@ -430,6 +434,35 @@ static int ov7670_init(void) {
 	return 0;
 }
 
+static bool ov7670_detect(void)
+{
+	uint8_t val = 0;
+
+	int tries = 5;
+	while (tries--) {
+		int ret = ov7670_read(OV7670_REG_PID, &val);
+		if (ret) {
+			log_printf(&util_logger, "%d: Error reading PID: %d", tries, ret);
+			continue;
+		}
+
+		if (val == 0x76) {
+			break;
+		}
+
+		log_printf(&util_logger, "%d: Unexpected PID: 0x%02x", tries, val);
+	}
+
+	if (tries <= 0) {
+		log_printf(&util_logger, "Camera ID failed.");
+		return false;
+	} else {
+		log_printf(&util_logger, "Camera ID'd: 0x%02x", val);
+	}
+
+	return true;
+}
+
 void run_camera(void)
 {
 	log_printf(&util_logger, "run_camera()");
@@ -445,34 +478,11 @@ void run_camera(void)
 	gpio_pull_up(I2C_PIN_SDA);
 	gpio_pull_up(I2C_PIN_SCL);
 
-	int ret;
-	uint8_t val = 0;
-
 	sleep_ms(1000);
 
-	int tries = 5;
-	while (tries--) {
-		ret = ov7670_read(OV7670_REG_PID, &val);
-		if (ret) {
-			log_printf(&util_logger, "%d: Error reading PID: %d", tries, ret);
-			continue;
-		}
-
-		if (val == 0x76) {
-			break;
-		}
-
-		log_printf(&util_logger, "%d: Unexpected PID: 0x%02x", tries, val);
-	}
-
-	if (tries <= 0) {
-		log_printf(&util_logger, "Camera ID failed.");
+	if (!ov7670_detect()) {
 		return;
-	} else {
-		log_printf(&util_logger, "Camera ID'd: 0x%02x", val);
 	}
-
-	ov7670_init();
 
 	struct camera camera;
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
