@@ -188,8 +188,8 @@ error:
 
 static void camera_pio_init(struct camera *camera)
 {
-	camera->shift_byte_offset = pio_add_program(camera->pio, &camera_shift_byte_program);
-	camera->frame_offset = pio_add_program(camera->pio, &camera_frame_oneplane_program);
+	camera->shift_byte_offset = pio_add_program(camera->pio, &camera_pio_shift_byte_program);
+	camera->frame_offset = pio_add_program(camera->pio, &camera_pio_frame_program);
 	for (int i = 0; i < 4; i++) {
 		camera_pio_init_gpios(camera->pio, i, PIN_D0);
 	}
@@ -246,7 +246,7 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 		uint8_t xfer_bytes = __dma_transfer_size_to_bytes(xfer_size);
 		camera->config.dma_transfers[i] = format_plane_size(format, i, width, height) / xfer_bytes,
 
-		camera->config.sm_cfgs[i + 1] = camera_pio_get_pixel_sm_config(camera->pio, i + 1,
+		camera->config.sm_cfgs[i + 1] = camera_pio_get_shift_byte_sm_config(camera->pio, i + 1,
 							camera->shift_byte_offset, PIN_D0,
 							xfer_bytes * 8);
 	}
