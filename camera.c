@@ -87,6 +87,16 @@ static uint8_t format_bytes_per_pixel(uint32_t format, uint8_t plane)
 	}
 }
 
+static uint8_t format_pixels_per_chunk(uint32_t format)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return 2;
+	default:
+		return 1;
+	}
+}
+
 static enum dma_channel_transfer_size format_transfer_size(uint32_t format, uint8_t plane)
 {
 	switch (format) {
@@ -276,8 +286,10 @@ static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
 				true);
 	}
 
+	uint32_t num_loops = buf->width / format_pixels_per_chunk(buf->format);
+
 	pio_sm_put_blocking(camera->pio, CAMERA_PIO_FRAME_SM, buf->height - 1);
-	pio_sm_put_blocking(camera->pio, CAMERA_PIO_FRAME_SM, buf->width - 1);
+	pio_sm_put_blocking(camera->pio, CAMERA_PIO_FRAME_SM, num_loops - 1);
 
 	return 0;
 }

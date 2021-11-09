@@ -84,8 +84,8 @@ wait 1 pin PIN_OFFS_HREF [2]  side 0x1 ; Wait for start of line
 public loop_pixel:
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 1)
-nop
-nop
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 3)
 jmp x-- loop_pixel
 
 wait 0 pin PIN_OFFS_HREF               ; Wait for end of line
@@ -133,8 +133,8 @@ static inline pio_sm_config camera_pio_get_frame_sm_config(PIO pio, uint sm, uin
 .program pixel_loop_yuyv
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 1)
-nop
-nop
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 2)
+irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 3)
 
 .program pixel_loop_rgb565
 irq wait (BYTE_IRQ_BASE + 1)           ; Trigger byte SM1 (byte 0)
