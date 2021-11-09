@@ -290,18 +290,14 @@ static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
 
 	uint32_t num_loops = buf->width / format_pixels_per_chunk(buf->format);
 
-	pio_sm_put_blocking(camera->pio, CAMERA_PIO_FRAME_SM, buf->height - 1);
-	pio_sm_put_blocking(camera->pio, CAMERA_PIO_FRAME_SM, num_loops - 1);
+	camera_pio_trigger_frame(camera->pio, num_loops, buf->height);
 
 	return 0;
 }
 
 static void camera_wait_for_completion(struct camera *camera)
 {
-	uint8_t num_planes = format_num_planes(camera->config.format);
-	for (int i = 0; i < num_planes; i++) {
-		dma_channel_wait_for_finish_blocking(camera->dma_channels[i]);
-	}
+	camera_pio_wait_for_frame_done(camera->pio);
 }
 
 volatile bool go = false;

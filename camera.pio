@@ -47,7 +47,8 @@ static inline pio_sm_config camera_pio_get_shift_byte_sm_config(PIO pio, uint sm
 .side_set 1 opt
 
 .wrap_target
-pull                                   ; Pull number of lines (note: used for synchronisation)
+irq wait 0                             ; Signal the CPU that we're at start-of-frame, and wait
+pull                                   ; Pull number of lines
 out Y, 32                              ; Store number of lines in Y
 pull                                   ; Pull "pixels" per line. Keep this in OSR to reload X each line
 
@@ -93,6 +94,24 @@ static inline pio_sm_config camera_pio_get_frame_sm_config(PIO pio, uint sm, uin
     sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
 
     return c;
+}
+
+static inline bool camera_pio_frame_done(PIO pio)
+{
+    return pio_interrupt_get(pio, 0);
+}
+
+static inline void camera_pio_wait_for_frame_done(PIO pio)
+{
+    while (!camera_pio_frame_done(pio));
+}
+
+static inline void camera_pio_trigger_frame(PIO pio, uint32_t cols, uint32_t rows)
+{
+    camera_pio_wait_for_frame_done(pio);
+    pio_sm_put_blocking(pio, 0, rows - 1);
+    pio_sm_put_blocking(pio, 0, cols - 1);
+    pio_interrupt_clear(pio, 0);
 }
 %}
 
