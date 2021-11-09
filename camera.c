@@ -43,6 +43,7 @@ struct camera_buffer {
 	uint32_t format;
 	uint16_t width;
 	uint16_t height;
+	uint32_t strides[3];
 	uint32_t sizes[3];
 	uint8_t *data[3];
 };
@@ -131,14 +132,14 @@ static uint8_t format_hsub(uint32_t format, uint8_t plane)
 	}
 }
 
+static uint32_t format_stride(uint32_t format, uint8_t plane, uint16_t width)
+{
+	return format_bytes_per_pixel(format, plane) * width / format_hsub(format, plane);
+}
+
 static uint32_t format_plane_size(uint32_t format, uint8_t plane, uint16_t width, uint16_t height)
 {
-	switch (format) {
-	case FORMAT_YUYV:
-		return format_bytes_per_pixel(format, plane) * width * height / format_hsub(format, plane);
-	default:
-		return 0;
-	}
+	return format_stride(format, plane, width) * height;
 }
 
 static void camera_buffer_free(struct camera_buffer *buf)
@@ -167,6 +168,7 @@ static struct camera_buffer *camera_buffer_alloc(uint32_t format, uint16_t width
 
 	uint8_t num_planes = format_num_planes(format);
 	for (int i = 0; i < num_planes; i++) {
+		buf->strides[i] = format_stride(format, i, width);
 		buf->sizes[i] = format_plane_size(format, i, width, height);
 		buf->data[i] = malloc(buf->sizes[i]);
 		if (!buf->data[i]) {
