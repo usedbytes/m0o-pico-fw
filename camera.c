@@ -22,8 +22,8 @@
 #include "camera.pio.h"
 
 #define I2C_BUS      i2c1
-#define I2C_PIN_SDA  14
-#define I2C_PIN_SCL  15
+#define I2C_PIN_SDA  10
+#define I2C_PIN_SCL  11
 #define PIN_D0       16
 
 #define IMG_W 160

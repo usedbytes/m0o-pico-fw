@@ -73,13 +73,13 @@ static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *
 	return COMM_RSP_OK;
 }
 
-#define PWM_SLICE_A   5
-#define MOTOR_PIN_A_A 10
-#define MOTOR_PIN_A_B 11
+#define PWM_SLICE_A   7
+#define MOTOR_PIN_A_A 14
+#define MOTOR_PIN_A_B 15
 #define PWM_SLICE_B 6
 #define MOTOR_PIN_B_A 12
 #define MOTOR_PIN_B_B 13
-#define PWM_MAX (127)
+#define PWM_MAX (127 + 120)
 #define PWM_MIN (PWM_MAX - 127)
 
 enum motor_id {
@@ -102,9 +102,9 @@ static void set_motor(enum motor_id motor, uint8_t value)
 	} else {
 		if (value < 0x80) {
 			pwm_set_chan_level(slice, PWM_CHAN_A, 0);
-			pwm_set_chan_level(slice, PWM_CHAN_B, PWM_MIN + (0x80 - value));
+			pwm_set_chan_level(slice, PWM_CHAN_B, PWM_MIN + ((0x80 - value) / 2));
 		} else {
-			pwm_set_chan_level(slice, PWM_CHAN_A, PWM_MIN + (value - 0x80));
+			pwm_set_chan_level(slice, PWM_CHAN_A, PWM_MIN + ((value - 0x80) / 2));
 			pwm_set_chan_level(slice, PWM_CHAN_B, 0);
 		}
 	}

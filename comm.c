@@ -13,8 +13,10 @@
 
 #include "comm.h"
 
-#define UART_TX_PIN 0
-#define UART_RX_PIN 1
+#define UART_TX_PIN 4
+#define UART_RX_PIN 5
+#define UART        uart1
+#define UART_HW     uart1_hw
 #define UART_BAUD   921600
 
 #define COMM_BUF_OPCODE(_buf)       ((uint32_t *)((uint8_t *)(_buf)))
@@ -78,7 +80,7 @@ static void comm_handle_error(uint32_t status)
 	ctx.dma_cb = comm_end_response;
 	dma_channel_configure(comm_dma_channel,
 			      &ctx.tx_config,
-			      &uart0_hw->dr,
+			      &UART_HW->dr,
 			      COMM_BUF_OPCODE(ctx.comm_buf),
 			      sizeof(uint32_t),
 			      true);
@@ -87,13 +89,13 @@ static void comm_handle_error(uint32_t status)
 
 static void comm_begin_sync(void)
 {
-	irq_set_enabled(UART0_IRQ, true);
+	irq_set_enabled(UART1_IRQ, true);
 }
 
 static void comm_end_sync(void)
 {
-	irq_set_enabled(UART0_IRQ, false);
-	irq_clear(UART0_IRQ);
+	irq_set_enabled(UART1_IRQ, false);
+	irq_clear(UART1_IRQ);
 	comm_end_opcode();
 }
 
@@ -103,7 +105,7 @@ static void comm_begin_opcode(void)
 	dma_channel_configure(comm_dma_channel,
 			      &ctx.rx_config,
 			      COMM_BUF_OPCODE(ctx.comm_buf),
-			      &uart0_hw->dr,
+			      &UART_HW->dr,
 			      sizeof(uint32_t),
 			      true);
 }
@@ -130,7 +132,7 @@ static void comm_begin_args(void)
 		dma_channel_configure(comm_dma_channel,
 				      &ctx.rx_config,
 				      COMM_BUF_ARGS(ctx.comm_buf),
-				      &uart0_hw->dr,
+				      &UART_HW->dr,
 				      ctx.cmd->nargs * 4,
 				      true);
 	}
@@ -167,7 +169,7 @@ static void comm_begin_data(void)
 		dma_channel_configure(comm_dma_channel,
 				      &ctx.rx_config,
 				      COMM_BUF_BODY(ctx.comm_buf, cmd->nargs),
-				      &uart0_hw->dr,
+				      &UART_HW->dr,
 				      ctx.data_len,
 				      true);
 	}
@@ -203,7 +205,7 @@ static void comm_begin_response(void)
 	ctx.dma_cb = comm_end_response;
 	dma_channel_configure(comm_dma_channel,
 			      &ctx.tx_config,
-			      &uart0_hw->dr,
+			      &UART_HW->dr,
 			      COMM_BUF_OPCODE(ctx.comm_buf),
 			      sizeof(uint32_t) + (sizeof(uint32_t) * cmd->resp_nargs) + ctx.resp_data_len,
 			      true);
@@ -226,8 +228,8 @@ static void uart_irq_handler(void)
 	uint8_t *recv = (uint8_t *)COMM_BUF_OPCODE(ctx.comm_buf);
 	const uint8_t *match = (const uint8_t *)&ctx.sync_opcode;
 
-	while (uart_is_readable(uart0) && (idx < sizeof(ctx.sync_opcode))) {
-		uart_read_blocking(uart0, recv + idx, 1);
+	while (uart_is_readable(UART) && (idx < sizeof(ctx.sync_opcode))) {
+		uart_read_blocking(UART, recv + idx, 1);
 
 		if (recv[idx] != match[idx]) {
 			// Start again
@@ -275,25 +277,25 @@ void comm_init(const struct comm_command *const *cmds, int n_cmds, uint32_t sync
 	ctx.rx_config = dma_channel_get_default_config(comm_dma_channel);
 	channel_config_set_read_increment(&ctx.rx_config, false);
 	channel_config_set_write_increment(&ctx.rx_config, true);
-	channel_config_set_dreq(&ctx.rx_config, DREQ_UART0_RX);
+	channel_config_set_dreq(&ctx.rx_config, DREQ_UART1_RX);
 	channel_config_set_transfer_data_size(&ctx.rx_config, DMA_SIZE_8);
 	channel_config_set_enable(&ctx.rx_config, true);
 
 	ctx.tx_config = dma_channel_get_default_config(comm_dma_channel);
 	channel_config_set_read_increment(&ctx.tx_config, true);
 	channel_config_set_write_increment(&ctx.tx_config, false);
-	channel_config_set_dreq(&ctx.tx_config, DREQ_UART0_TX);
+	channel_config_set_dreq(&ctx.tx_config, DREQ_UART1_TX);
 	channel_config_set_transfer_data_size(&ctx.tx_config, DMA_SIZE_8);
 	channel_config_set_enable(&ctx.tx_config, true);
 
 	irq_set_exclusive_handler(DMA_IRQ_0, dma_irq_handler);
 	irq_set_enabled(DMA_IRQ_0, true);
 
-	irq_set_exclusive_handler(UART0_IRQ, uart_irq_handler);
+	irq_set_exclusive_handler(UART1_IRQ, uart_irq_handler);
 
-	uart_init(uart0, UART_BAUD);
-	uart_set_hw_flow(uart0, false, false);
-	uart_set_irq_enables(uart0, true, false);
+	uart_init(UART, UART_BAUD);
+	uart_set_hw_flow(UART, false, false);
+	uart_set_irq_enables(UART, true, false);
 	gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
 	gpio_set_function(UART_RX_PIN, GPIO_FUNC_UART);
 
