@@ -8,8 +8,10 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/dma.h"
+#include "hardware/i2c.h"
 #include "hardware/pwm.h"
 
+#include "bno055.h"
 #include "log.h"
 #include "comm.h"
 #include "util.h"
@@ -165,13 +167,29 @@ int main()
 	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_B, 0);
 	pwm_set_enabled(PWM_SLICE_B, true);
 
-	run_camera();
+	//run_camera();
 
 	//multicore_launch_core1(core1_main);
 
+	i2c_init(i2c0, 100 * 1000);
+	gpio_set_function(0, GPIO_FUNC_I2C);
+	gpio_set_function(1, GPIO_FUNC_I2C);
+	gpio_pull_up(0);
+	gpio_pull_up(1);
+
+	sleep_ms(1000);
+
+	struct bno055 bno055;
+	int ret = bno055_init(&bno055, i2c0, 0x29);
+	log_printf(&util_logger, "init: %d", ret);
+
 	int i = 0;
 	while (1) {
-		//log_printf(&util_logger, "From core 0: %d", i++);
-		sleep_ms(100);
+		float vec[3];
+		int ret;
+
+		ret = bno055_get_vector(&bno055, BNO055_VECTOR_EULER, vec);
+		log_printf(&util_logger, "%d: %3.3f, %3.3f, %3.3f", ret, vec[0], vec[1], vec[2]);
+		sleep_ms(300);
 	}
 }
