@@ -276,3 +276,15 @@ int bno055_get_vector(struct bno055 *bno055, enum bno055_vector_type type, float
 
 	return 0;
 }
+
+int bno055_get_heading(struct bno055 *bno055, int16_t *heading16)
+{
+	int ret;
+
+	ret = bno055_read(bno055, BNO055_VECTOR_EULER, (uint8_t *)heading16, sizeof(*heading16));
+	if (ret) {
+		return ret;
+	}
+
+	return 0;
+}

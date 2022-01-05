@@ -235,4 +235,7 @@ int bno055_get_temp(struct bno055 *bno055, uint8_t *temp);
 
 int bno055_get_vector(struct bno055 *bno055, enum bno055_vector_type type, float vec[3]);
 
+// Puts heading multiplied by 16 (the raw sensor format) into heading16
+int bno055_get_heading(struct bno055 *bno055, int16_t *heading16);
+
 #endif /* __BNO055_H__ */
