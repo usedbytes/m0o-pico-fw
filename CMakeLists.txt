@@ -18,6 +18,7 @@ add_executable(rebound
 	util.c
 	camera.c
 	bno055.c
+	chassis.c
 )
 
 pico_generate_pio_header(rebound ${CMAKE_CURRENT_LIST_DIR}/camera.pio)

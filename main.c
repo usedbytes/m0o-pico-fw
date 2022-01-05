@@ -9,14 +9,19 @@
 #include "pico/multicore.h"
 #include "hardware/dma.h"
 #include "hardware/i2c.h"
-#include "hardware/pwm.h"
 
 #include "bno055.h"
-#include "log.h"
+#include "chassis.h"
 #include "comm.h"
+#include "log.h"
 #include "util.h"
 
 #define CMD_INPUT    (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
+
+#define MOTOR_PIN_L_A 14
+#define MOTOR_PIN_L_B 15
+#define MOTOR_PIN_R_A 12
+#define MOTOR_PIN_R_B 13
 
 #define BTN_BIT_A       0
 #define BTN_BIT_B       1
@@ -32,6 +37,9 @@
 #define BTN_BIT_SELECT  11
 #define BTN_BIT_HEART   12
 #define BTN_BIT_STAR    13
+
+struct chassis chassis;
+volatile bool heading_mode;
 
 struct bt_hid_state {
 	uint16_t buttons;
@@ -75,43 +83,6 @@ static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *
 	return COMM_RSP_OK;
 }
 
-#define PWM_SLICE_A   7
-#define MOTOR_PIN_A_A 14
-#define MOTOR_PIN_A_B 15
-#define PWM_SLICE_B 6
-#define MOTOR_PIN_B_A 12
-#define MOTOR_PIN_B_B 13
-#define PWM_MAX (127 + 120)
-#define PWM_MIN (PWM_MAX - 127)
-
-enum motor_id {
-	MOTOR_A,
-	MOTOR_B,
-};
-
-enum motor_dir {
-	MOTOR_DIR_FWD,
-	MOTOR_DIR_REV,
-};
-
-static void set_motor(enum motor_id motor, uint8_t value)
-{
-	uint slice = motor == MOTOR_A ? PWM_SLICE_A : PWM_SLICE_B;
-
-	if (value == 0x80) {
-		pwm_set_chan_level(slice, PWM_CHAN_A, 0);
-		pwm_set_chan_level(slice, PWM_CHAN_B, 0);
-	} else {
-		if (value < 0x80) {
-			pwm_set_chan_level(slice, PWM_CHAN_A, 0);
-			pwm_set_chan_level(slice, PWM_CHAN_B, PWM_MIN + ((0x80 - value) / 2));
-		} else {
-			pwm_set_chan_level(slice, PWM_CHAN_A, PWM_MIN + ((value - 0x80) / 2));
-			pwm_set_chan_level(slice, PWM_CHAN_B, 0);
-		}
-	}
-}
-
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	struct bt_hid_state state;
@@ -127,8 +98,15 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 		gpio_put(PICO_DEFAULT_LED_PIN, 0);
 	}
 
-	set_motor(MOTOR_A, state.ly);
-	set_motor(MOTOR_B, state.ry);
+	if (state.buttons & (1 << BTN_BIT_Y)) {
+		heading_mode = true;
+	}
+
+	if (state.buttons & (1 << BTN_BIT_A)) {
+		heading_mode = false;
+	}
+
+	chassis_set(&chassis, state.ly - 128, state.ry - 128);
 
 	return COMM_RSP_OK;
 }
@@ -145,6 +123,16 @@ static void core1_main(void)
 	}
 }
 
+static int8_t clamp8(int16_t value) {
+	if (value > 127) {
+		return 127;
+	} else if (value < -128) {
+		return -128;
+	}
+
+	return value;
+}
+
 int main()
 {
 	gpio_init(PICO_DEFAULT_LED_PIN);
@@ -154,18 +142,7 @@ int main()
 
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
-	gpio_set_function(MOTOR_PIN_A_A, GPIO_FUNC_PWM);
-	gpio_set_function(MOTOR_PIN_A_B, GPIO_FUNC_PWM);
-	pwm_set_wrap(PWM_SLICE_A, PWM_MAX + 1);
-	pwm_set_chan_level(PWM_SLICE_A, PWM_CHAN_A, 0);
-	pwm_set_chan_level(PWM_SLICE_A, PWM_CHAN_B, 0);
-	pwm_set_enabled(PWM_SLICE_A, true);
-	gpio_set_function(MOTOR_PIN_B_A, GPIO_FUNC_PWM);
-	gpio_set_function(MOTOR_PIN_B_B, GPIO_FUNC_PWM);
-	pwm_set_wrap(PWM_SLICE_B, PWM_MAX + 1);
-	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_A, 0);
-	pwm_set_chan_level(PWM_SLICE_B, PWM_CHAN_B, 0);
-	pwm_set_enabled(PWM_SLICE_B, true);
+	chassis_init(&chassis, MOTOR_PIN_L_A, MOTOR_PIN_R_A);
 
 	//run_camera();
 
@@ -183,13 +160,36 @@ int main()
 	int ret = bno055_init(&bno055, i2c0, 0x29);
 	log_printf(&util_logger, "init: %d", ret);
 
+	int16_t target_heading = 0;
+	int16_t kp = -(1 << 6);
 	int i = 0;
 	while (1) {
-		float vec[3];
-		int ret;
+		if (!heading_mode) {
+			sleep_ms(300);
+			continue;
+		}
 
-		ret = bno055_get_vector(&bno055, BNO055_VECTOR_EULER, vec);
-		log_printf(&util_logger, "%d: %3.3f, %3.3f, %3.3f", ret, vec[0], vec[1], vec[2]);
-		sleep_ms(300);
+		sleep_ms(10);
+
+		int16_t current_heading;
+		int ret = bno055_get_heading(&bno055, &current_heading);
+		if (ret != 0) {
+			heading_mode = false;
+			log_printf(&util_logger, "error: %d", ret);
+			ret = bno055_init(&bno055, i2c0, 0x29);
+			log_printf(&util_logger, "re-init: %d", ret);
+			continue;
+		}
+
+		int16_t heading_diff = current_heading - target_heading;
+		while (heading_diff > (180 * 16)) {
+			heading_diff -= (360 * 16);
+		}
+
+		int16_t omega = (heading_diff * kp) >> 8;
+
+		//log_printf(&util_logger, "heading_diff: %d, omega: %f\n", heading_diff, omega / 256.0);
+
+		chassis_set(&chassis, clamp8(-omega), clamp8(omega));
 	}
 }
