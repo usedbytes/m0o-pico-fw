@@ -12,10 +12,17 @@
 struct chassis {
 	uint slice_l;
 	uint slice_r;
+
+	int8_t l;
+	int8_t r;
 };
 
 void chassis_init(struct chassis *chassis, uint8_t pin_la, uint8_t pin_ra);
 
-void chassis_set(struct chassis *chassis, int8_t l, int8_t r);
+void chassis_set_raw(struct chassis *chassis, int8_t left, int8_t right);
+
+// linear and rot can use the full range, but linear speed will be reduced
+// to meet the requested rotational speed.
+void chassis_set(struct chassis *chassis, int8_t linear, int8_t rot);
 
 #endif /* __CHASSIS_H__ */

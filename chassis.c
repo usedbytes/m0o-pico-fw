@@ -8,6 +8,9 @@
 #include "hardware/pwm.h"
 #include "chassis.h"
 
+#include "log.h"
+#include "util.h"
+
 #define PWM_MIN 80
 #define PWM_MAX (PWM_MIN + 127)
 
@@ -41,14 +44,49 @@ static void slice_set(uint slice, int8_t value)
 	if (value == 0) {
 		pwm_set_both_levels(slice, 0, 0);
 	} else if (value < 0) {
-		pwm_set_both_levels(slice, 0, PWM_MIN + mag);
-	} else {
 		pwm_set_both_levels(slice, PWM_MIN + mag, 0);
+	} else {
+		pwm_set_both_levels(slice, 0, PWM_MIN + mag);
 	}
 }
 
-void chassis_set(struct chassis *chassis, int8_t l, int8_t r)
+void chassis_set_raw(struct chassis *chassis, int8_t left, int8_t right)
 {
-	slice_set(chassis->slice_l, l);
-	slice_set(chassis->slice_r, r);
+	slice_set(chassis->slice_l, left);
+	slice_set(chassis->slice_r, right);
+
+	chassis->l = left;
+	chassis->r = right;
+}
+
+void chassis_set(struct chassis *chassis, int8_t linear, int8_t rot)
+{
+	// Positive rotation == CCW == right goes faster
+
+	if (linear < -127) {
+		linear = -127;
+	}
+
+	if (rot < -127) {
+		rot = -127;
+	}
+
+	int l = linear - rot;
+	int r = linear + rot;
+	int adj = 0;
+
+	if (l > 127) {
+		adj = l - 127;
+	} else if (l < -127) {
+		adj = l + 127;
+	}else if (r > 127) {
+		adj = r - 127;
+	} else if (r < -127) {
+		adj = r + 127;
+	}
+
+	l -= adj;
+	r -= adj;
+
+	chassis_set_raw(chassis, l, r);
 }

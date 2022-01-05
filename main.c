@@ -83,6 +83,16 @@ static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *
 	return COMM_RSP_OK;
 }
 
+static int8_t clamp8(int16_t value) {
+	if (value > 127) {
+		return 127;
+	} else if (value < -128) {
+		return -128;
+	}
+
+	return value;
+}
+
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	struct bt_hid_state state;
@@ -106,7 +116,9 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 		heading_mode = false;
 	}
 
-	chassis_set(&chassis, state.ly - 128, state.ry - 128);
+	int8_t linear = clamp8(-(state.ly - 128));
+	int8_t rot = clamp8(-(state.rx - 128));
+	chassis_set(&chassis, linear, rot);
 
 	return COMM_RSP_OK;
 }
@@ -121,16 +133,6 @@ static void core1_main(void)
 	while (1) {
 		tight_loop_contents();
 	}
-}
-
-static int8_t clamp8(int16_t value) {
-	if (value > 127) {
-		return 127;
-	} else if (value < -128) {
-		return -128;
-	}
-
-	return value;
 }
 
 int main()
@@ -188,8 +190,6 @@ int main()
 
 		int16_t omega = (heading_diff * kp) >> 8;
 
-		//log_printf(&util_logger, "heading_diff: %d, omega: %f\n", heading_diff, omega / 256.0);
-
-		chassis_set(&chassis, clamp8(-omega), clamp8(omega));
+		chassis_set(&chassis, 0, -omega);
 	}
 }
