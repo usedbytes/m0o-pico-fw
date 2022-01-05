@@ -60,10 +60,26 @@ static inline void __log_read_bytes(struct log_buffer *log, uint8_t *data, uint1
 	log->space += len;
 }
 
+static inline uint16_t __log_drop_message(struct log_buffer *log)
+{
+	if (log->space == sizeof(log->buf)) {
+		return 0;
+	}
+
+	struct log_message msg;
+	__log_peek_bytes(log, (uint8_t *)&msg, sizeof(msg));
+
+	uint16_t msg_size = sizeof(msg) + msg.len;
+	uint16_t extract_idx = log->extract_idx;
+	log->extract_idx = (extract_idx + msg_size) % sizeof(log->buf);
+	log->space += msg_size;
+
+	return msg_size;
+}
+
 static inline void __log_make_space(struct log_buffer *log, uint32_t at_least)
 {
 	int space = log->space;
-	int extract_idx = log->extract_idx;
 
 	// FIXME: Using <= wastes some space, but it avoids a corner case
 	// where the buffer ends up exactly full meaning that drain
@@ -71,16 +87,13 @@ static inline void __log_make_space(struct log_buffer *log, uint32_t at_least)
 	// We can fix this by switching the insert/extract indices to be
 	// non-modulo.
 	while (space <= at_least) {
-		struct log_message msg;
-		__log_peek_bytes(log, (uint8_t *)&msg, sizeof(msg));
-
-		uint16_t msg_size = sizeof(msg) + msg.len;
-
-		extract_idx = (extract_idx + msg_size) % sizeof(log->buf);
+		uint16_t msg_size = __log_drop_message(log);
 		space += msg_size;
+
+		if (msg_size == 0) {
+			break;
+		}
 	}
-	log->extract_idx = extract_idx;
-	log->space = space;
 }
 
 void log_write(struct log_buffer *log, const char *message, uint16_t len)
