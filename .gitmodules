@@ -1,0 +1,3 @@
+[submodule "vl53l0x"]
+	path = vl53l0x
+	url = git@github.com:usedbytes/VL53L0X_API.git
