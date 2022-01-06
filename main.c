@@ -23,6 +23,8 @@
 #define MOTOR_PIN_R_A 12
 #define MOTOR_PIN_R_B 13
 
+#define BNO055_ADDR 0x28
+
 #define BTN_BIT_A       0
 #define BTN_BIT_B       1
 #define BTN_BIT_X       2
@@ -159,7 +161,7 @@ int main()
 	sleep_ms(1000);
 
 	struct bno055 bno055;
-	int ret = bno055_init(&bno055, i2c0, 0x29);
+	int ret = bno055_init(&bno055, i2c0, BNO055_ADDR);
 	log_printf(&util_logger, "init: %d", ret);
 
 	int16_t target_heading = 0;
@@ -178,7 +180,7 @@ int main()
 		if (ret != 0) {
 			heading_mode = false;
 			log_printf(&util_logger, "error: %d", ret);
-			ret = bno055_init(&bno055, i2c0, 0x29);
+			ret = bno055_init(&bno055, i2c0, BNO055_ADDR);
 			log_printf(&util_logger, "re-init: %d", ret);
 			continue;
 		}
