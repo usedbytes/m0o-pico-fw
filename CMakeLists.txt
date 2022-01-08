@@ -19,7 +19,10 @@ add_executable(rebound
 	camera.c
 	bno055.c
 	chassis.c
+	vl53l0x.c
 )
+
+add_subdirectory(vl53l0x)
 
 pico_generate_pio_header(rebound ${CMAKE_CURRENT_LIST_DIR}/camera.pio)
 
@@ -41,4 +44,5 @@ target_link_libraries(rebound
 	hardware_structs
 	hardware_watchdog
 	hardware_uart
+	vl53l0x
 )

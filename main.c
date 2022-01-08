@@ -15,6 +15,7 @@
 #include "comm.h"
 #include "log.h"
 #include "util.h"
+#include "vl53l0x.h"
 
 #define CMD_INPUT    (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
 
@@ -137,6 +138,38 @@ static void core1_main(void)
 	}
 }
 
+static int reinit_vl53l0x(struct vl53l0x_dev *sens)
+{
+	int ret = vl53l0x_init(sens);
+	log_printf(&util_logger, "vl53l0x init: %d", ret);
+	if (ret) {
+		log_printf(&util_logger, "init fail: %x", vl53l0x_get_platform_error());
+		return ret;
+	}
+
+	ret = vl53l0x_set_measurement_mode(sens, VL53L0X_DEVICEMODE_SINGLE_RANGING);
+	if (ret) {
+		log_printf(&util_logger, "vl53l0x set mode: %d", ret);
+		return ret;
+	}
+
+	ret = vl53l0x_set_measurement_time(sens, 66000);
+	if (ret) {
+		log_printf(&util_logger, "vl53l0x set time: %d", ret);
+		return ret;
+	}
+
+	/*
+	ret = vl53l0x_set_long_range_preset(sens);
+	if (ret) {
+		log_printf(&util_logger, "vl53l0x set time: %d", ret);
+		return ret;
+	}
+	*/
+
+	return 0;
+}
+
 int main()
 {
 	gpio_init(PICO_DEFAULT_LED_PIN);
@@ -162,13 +195,51 @@ int main()
 
 	struct bno055 bno055;
 	int ret = bno055_init(&bno055, i2c0, BNO055_ADDR);
-	log_printf(&util_logger, "init: %d", ret);
+	log_printf(&util_logger, "bno055 init: %d", ret);
 
 	int16_t target_heading = 0;
 	int16_t kp = -(1 << 6);
 	int i = 0;
+
+	struct vl53l0x_dev sens = {
+		.i2c = i2c0,
+		.addr_7b = 0x29,
+	};
+
+	bool inited = false;
+	ret = reinit_vl53l0x(&sens);
+	if (!ret) {
+		inited = true;
+	}
+
+	VL53L0X_RangingMeasurementData_t data;
+	if (inited) {
+		log_printf(&util_logger, "Do measure...");
+		ret = vl53l0x_do_single_measurement(&sens, &data);
+		log_printf(&util_logger, "Done: %d %d mm", ret, data.RangeMilliMeter);
+		if (ret) {
+			inited = false;
+		}
+	}
+
 	while (1) {
 		if (!heading_mode) {
+			if (inited) {
+				log_printf(&util_logger, "Do measure...");
+				ret = vl53l0x_do_single_measurement(&sens, &data);
+				char status_str[128];
+				VL53L0X_GetRangeStatusString(data.RangeStatus, status_str);
+				log_printf(&util_logger, "Done: %d %d mm, timestamp %d us, status %s", ret, data.RangeMilliMeter,
+						data.TimeStamp, status_str);
+				if (ret != 0) {
+					inited = false;
+				}
+			} else {
+				ret = reinit_vl53l0x(&sens);
+				if (ret) {
+					inited = false;
+				}
+			}
 			sleep_ms(300);
 			continue;
 		}
