@@ -5,7 +5,7 @@
 ;
 
 .define PUBLIC PIN_OFFS_D0       0
-.define PUBLIC PIN_OFFS_CLK_INH  1
+.define PUBLIC PIN_OFFS_CLK      1
 .define PUBLIC PIN_OFFS_VSYNC    2
 .define PUBLIC PIN_OFFS_HREF     3
 .define PUBLIC PIN_OFFS_PXCLK    4
@@ -19,16 +19,14 @@
 .wrap_target
 set X 7                                 ; Load the bit counter
 wait 1 irq 4 rel                        ; Wait to be triggered - waits for IRQ 4 + SM number
-wait 1 pin PIN_OFFS_PXCLK side 0x1      ; Wait for PXCLK to go high, set CLK_INH
-wait 1 gpio GPIO_XCLK                   ; Wait for CLK to go high (before clearing INH)
+wait 1 pin PIN_OFFS_PXCLK               ; Wait for PXCLK to go high
 
 loop_bit:
-wait 0 gpio GPIO_XCLK side 0x0          ; Wait for CLK to go low, clear CLK_INH
-wait 1 gpio GPIO_XCLK                   ; Wait for CLK to go high
-in PINS 1                               ; Grab a bit of data
+nop side 0x1 [1]                        ; side set CLK
+in PINS 1 side 0x0 [1]                  ; Grab a bit of data, clear CLK
 jmp x-- loop_bit
 
-wait 0 pin PIN_OFFS_PXCLK side 0x1      ; Wait for PXCLK to go low, set CLK_INH
+wait 0 pin PIN_OFFS_PXCLK               ; Wait for PXCLK to go low, clear CLK
 .wrap
 
 % c-sdk {
@@ -37,7 +35,7 @@ static inline pio_sm_config camera_pio_get_shift_byte_sm_config(PIO pio, uint sm
     pio_sm_config c = camera_pio_shift_byte_program_get_default_config(offset);
     sm_config_set_in_pins(&c, base_pin);
     sm_config_set_in_shift(&c, true, true, bpp);
-    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
+    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK);
 
     return c;
 }
@@ -52,11 +50,11 @@ pull                                   ; Pull number of lines
 out Y, 32                              ; Store number of lines in Y
 pull                                   ; Pull "pixels" per line. Keep this in OSR to reload X each line
 
-wait 1 pin PIN_OFFS_VSYNC side 0x1     ; Wait for start of frame, set initial CLK_INH
+wait 1 pin PIN_OFFS_VSYNC              ; Wait for start of frame
 
 loop_line:
 mov X, OSR                             ; Store number of pixels in X
-wait 1 pin PIN_OFFS_HREF [2]  side 0x1 ; Wait for start of line
+wait 1 pin PIN_OFFS_HREF               ; Wait for start of line
 
 ; The pixel loop body can be patched for different pixel formats / plane
 ; layouts. Up to 4 bytes per pixel.
@@ -80,7 +78,7 @@ jmp y-- loop_line
 static inline void camera_pio_init_gpios(PIO pio, uint sm, uint base_pin)
 {
     pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
-    pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK_INH, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK, 1, true);
     for (uint i = 0; i < 5; i++) {
         pio_gpio_init(pio, i + base_pin);
     }
@@ -91,7 +89,7 @@ static inline pio_sm_config camera_pio_get_frame_sm_config(PIO pio, uint sm, uin
     pio_sm_config c = camera_pio_frame_program_get_default_config(offset);
     sm_config_set_in_pins(&c, base_pin);
     sm_config_set_out_shift(&c, true, false, 0);
-    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK_INH);
+    sm_config_set_sideset_pins(&c, base_pin + PIN_OFFS_CLK);
 
     return c;
 }
