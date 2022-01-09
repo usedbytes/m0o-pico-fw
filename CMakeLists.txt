@@ -32,6 +32,7 @@ target_link_libraries(rebound
 	pico_stdlib
 	pico_stdlib_headers
 	pico_sync
+	pico_util
 	hardware_i2c
 	hardware_dma
 	hardware_pio

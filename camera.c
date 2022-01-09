@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "pico/util/queue.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
@@ -36,12 +37,15 @@
 
 #define CMD_SNAP    (('S' << 0) | ('N' << 8) | ('A' << 16) | ('P' << 24))
 #define CMD_SNAPGET (('S' << 0) | ('G' << 8) | ('E' << 16) | ('T' << 24))
+#define CMD_CAMERA  (('C' << 0) | ('A' << 8) | ('M' << 16) | ('C' << 24))
 
 #define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
 
 static int ov7670_write(uint8_t addr, uint8_t value);
 static int ov7670_read(uint8_t addr, uint8_t *value);
 static int ov7670_init(void);
+
+static queue_t camera_queue;
 
 struct camera_buffer {
 	uint32_t format;
@@ -68,6 +72,25 @@ struct camera {
 	int dma_channels[3];
 
 	struct camera_config config;
+};
+
+#define CAMERA_CMD_TRIGGER     1
+#define CAMERA_CMD_GET_REG_BUF 2
+#define CAMERA_CMD_INIT        3
+
+uint8_t reg_buffer[256];
+
+struct camera_cmd {
+	uint8_t cmd;
+	union {
+		struct {
+			uint8_t n_regs;
+		} set_reg_buffer;
+		struct {
+			uint8_t pad[3];
+		} pad;
+	};
+	uint32_t pdata;
 };
 
 struct camera_buffer *cam_buf;
@@ -310,6 +333,33 @@ volatile bool done = false;
 static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_snapget(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
+static uint32_t handle_camera_cmd(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+
+const struct comm_command camera_cmd = {
+	.opcode = CMD_CAMERA,
+	.nargs = 2,
+	.resp_nargs = 2,
+	.size = NULL,
+	.handle = &handle_camera_cmd,
+};
+
+static uint32_t handle_camera_cmd(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	struct camera_cmd *cmd_in = (struct camera_cmd *)args_in;
+	struct camera_cmd *cmd_out = (struct camera_cmd *)resp_args_out;
+
+	switch (cmd_in->cmd) {
+	case CAMERA_CMD_GET_REG_BUF:
+		cmd_out->cmd = CAMERA_CMD_GET_REG_BUF;
+		cmd_out->pdata = (uint32_t)reg_buffer;
+		break;
+	default:
+		queue_try_add(&camera_queue, cmd_in);
+		break;
+	}
+
+	return COMM_RSP_OK;
+}
 
 const struct comm_command snap_cmd = {
 	.opcode = CMD_SNAP,
@@ -466,6 +516,7 @@ static bool ov7670_detect(void)
 void run_camera(void)
 {
 	log_printf(&util_logger, "run_camera()");
+	queue_init(&camera_queue, sizeof(struct camera_cmd), 4);
 
 	// 125 MHz / 8 = 15.625 MHz
 	clock_gpio_init(GPIO_XCLK, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 8);
@@ -490,15 +541,20 @@ void run_camera(void)
 	cam_buf = camera_buffer_alloc(FORMAT_YUYV, 80, 72);
 	assert(cam_buf);
 
+	struct camera_cmd cmd;
 	while (1) {
-		while (!go);
-		go = false;
+		queue_remove_blocking(&camera_queue, &cmd);
 
-		log_printf(&util_logger, "Start frame");
-		camera_do_frame(&camera, cam_buf);
-		log_printf(&util_logger, "Waiting");
-		camera_wait_for_completion(&camera);
-		done = true;
-		log_printf(&util_logger, "Frame done");
+		switch (cmd.cmd) {
+		case CAMERA_CMD_TRIGGER:
+			done = false;
+			log_printf(&util_logger, "Start frame");
+			camera_do_frame(&camera, cam_buf);
+			log_printf(&util_logger, "Waiting");
+			camera_wait_for_completion(&camera);
+			done = true;
+			log_printf(&util_logger, "Frame done");
+			break;
+		}
 	}
 }
