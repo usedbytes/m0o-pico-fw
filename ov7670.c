@@ -96,7 +96,7 @@ static const OV7670_command
         {OV7670_REG_HAECC7, 0x94},
         {OV7670_REG_COM8, OV7670_COM8_FASTAEC | OV7670_COM8_AECSTEP |
                               OV7670_COM8_BANDING | OV7670_COM8_AGC |
-                              OV7670_COM8_AEC},
+                              OV7670_COM8_AEC | OV7670_COM8_AWB },
         {OV7670_REG_COM5, 0x61},
         {OV7670_REG_COM6, 0x4B},
         {0x16, 0x02},            // Reserved register?
@@ -146,14 +146,15 @@ static const OV7670_command
         {OV7670_REG_LCC7, 0x08},
         {OV7670_REG_AWBCTR3, 0x0A},
         {OV7670_REG_AWBCTR2, 0x55},
-        {OV7670_REG_MTX1, 0x80},
-        {OV7670_REG_MTX2, 0x80},
-        {OV7670_REG_MTX3, 0x00},
-        {OV7670_REG_MTX4, 0x22},
-        {OV7670_REG_MTX5, 0x5E},
-        {OV7670_REG_MTX6, 0x80}, // 0x40?
+        //{OV7670_REG_MTX1, 0x80},
+        //{OV7670_REG_MTX2, 0x80},
+        //{OV7670_REG_MTX3, 0x00},
+        //{OV7670_REG_MTX4, 0x22},
+        //{OV7670_REG_MTX5, 0x5E},
+        //{OV7670_REG_MTX6, 0x80}, // 0x40?
         {OV7670_REG_AWBCTR1, 0x11},
-        {OV7670_REG_AWBCTR0, 0x9F}, // Or use 0x9E for advance AWB
+        //{OV7670_REG_AWBCTR0, 0x9F}, // Or use 0x9E for advance AWB
+        {OV7670_REG_AWBCTR0, 0x9E}, // Or use 0x9E for advance AWB
         {OV7670_REG_BRIGHT, 0x00},
         {OV7670_REG_CONTRAS, 0x40},
         {OV7670_REG_CONTRAS_CENTER, 0x80}, // 0x40?
