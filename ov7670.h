@@ -4,9 +4,11 @@
 
 #pragma once
 
+#include "pico/stdlib.h"
+
 // IMPORTANT: #include ALL of the arch-specific .h files here.
 // They have #ifdef checks to only take effect on the active architecture.
-#include "arch/samd51.h"
+//#include "arch/samd51.h"
 
 #if defined(ARDUINO)
 #include <Arduino.h>
@@ -22,7 +24,15 @@
 // #defined here as with Arduino above. If platform does NOT provide some
 // or all of these, they should go in the device-specific .c file with a
 // !defined(ARDUINO) around them.
+#define OV7670_delay_ms(x) sleep_ms(x)
+#define OV7670_pin_output(pin) { gpio_init(pin); gpio_set_dir(pin, GPIO_OUT); }
+#define OV7670_pin_write(pin, hi) gpio_put(pin, !!hi)
 #endif // end platforms
+
+#define OV7670_XCLK_HZ 15625000
+
+typedef int OV7670_pin;
+typedef int OV7670_arch;
 
 /** Status codes returned by some functions */
 typedef enum {
@@ -189,6 +199,7 @@ typedef struct {
 #define OV7670_REG_TSLB 0x3A               //< Line buffer test option
 #define OV7670_TSLB_NEG 0x20               //< TSLB Negative image enable
 #define OV7670_TSLB_YLAST 0x04             //< TSLB UYVY or VYUY, see COM13
+#define OV7670_TSLB_YFIRST 0x0D            //< TSLB UYVY or VYUY, see COM13
 #define OV7670_TSLB_AOW 0x01               //< TSLB Auto output window
 #define OV7670_REG_COM11 0x3B              //< Common control 11
 #define OV7670_COM11_NIGHT 0x80            //< COM11 Night mode

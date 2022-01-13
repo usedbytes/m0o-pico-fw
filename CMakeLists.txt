@@ -17,6 +17,7 @@ add_executable(rebound
 	comm.c
 	util.c
 	camera.c
+	ov7670.c
 )
 
 pico_generate_pio_header(rebound ${CMAKE_CURRENT_LIST_DIR}/camera.pio)

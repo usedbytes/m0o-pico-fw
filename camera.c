@@ -18,7 +18,8 @@
 
 #include "log.h"
 #include "util.h"
-#include "ov7670_reg.h"
+//#include "ov7670_reg.h"
+#include "ov7670.h"
 
 #include "camera.pio.h"
 
@@ -40,6 +41,7 @@
 #define CMD_CAMERA  (('C' << 0) | ('A' << 8) | ('M' << 16) | ('C' << 24))
 
 #define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
+#define FORMAT_RGB565 (('R' << 0) | ('G' << 8) | ('1' << 16) | ('6' << 24))
 
 static int ov7670_write(uint8_t addr, uint8_t value);
 static int ov7670_read(uint8_t addr, uint8_t *value);
@@ -99,6 +101,8 @@ static uint8_t format_num_planes(uint32_t format)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return 1;
 	default:
 		return 0;
@@ -109,6 +113,8 @@ static uint8_t format_bytes_per_pixel(uint32_t format, uint8_t plane)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return 2;
 	default:
 		return 0;
@@ -119,6 +125,8 @@ static uint8_t format_pixels_per_chunk(uint32_t format)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return 2;
 	default:
 		return 1;
@@ -129,6 +137,8 @@ static enum dma_channel_transfer_size format_transfer_size(uint32_t format, uint
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return DMA_SIZE_32;
 	default:
 		return 0;
@@ -153,6 +163,8 @@ static uint8_t format_hsub(uint32_t format, uint8_t plane)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return 1;
 	default:
 		return 0;
@@ -285,7 +297,7 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 
 static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
 {
-	ov7670_init();
+	//ov7670_init();
 
 	*camera = (struct camera){ 0 };
 
@@ -456,7 +468,6 @@ static int ov7670_init(void) {
 	ov7670_write(OV7670_REG_COM3, 0x0C);
 	/* Stop PCLK during Hblank */
 	ov7670_write(OV7670_REG_COM10, (1 << 5));
-#endif
 
 	/*
 	// Preset QCIF from OV7670 IM
@@ -481,6 +492,7 @@ static int ov7670_init(void) {
 	ov7670_write(OV7670_REG_SCPCLK, 0xF2);
 	ov7670_write(OV7670_REG_SCPDLY, 0x2A);
 
+#endif
 	return 0;
 }
 
@@ -533,12 +545,31 @@ void run_camera(void)
 		return;
 	}
 
+	typedef struct {
+	  OV7670_arch *arch; ///< Architecture-specific config data
+	  OV7670_pins *pins; ///< Physical connection to camera
+	  void *platform;    ///< Platform-specific data (e.g. Arduino C++ object)
+	} OV7670_host;
+
+	OV7670_host host = {
+		.pins = &(OV7670_pins){
+			.enable = -1,
+			.reset = -1,
+		},
+		.platform = &host,
+	};
+
+	const uint16_t width = 80;
+	const uint16_t height = 60;
+
+	OV7670_begin(&host, OV7670_COLOR_RGB, OV7670_SIZE_DIV8, 2.0);
+
 	struct camera camera;
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
 
-	camera_configure(&camera, FORMAT_YUYV, 80, 72);
+	camera_configure(&camera, FORMAT_RGB565, width, height);
 
-	cam_buf = camera_buffer_alloc(FORMAT_YUYV, 80, 72);
+	cam_buf = camera_buffer_alloc(FORMAT_RGB565, width, height);
 	assert(cam_buf);
 
 	struct camera_cmd cmd;
@@ -557,4 +588,23 @@ void run_camera(void)
 			break;
 		}
 	}
+}
+
+void OV7670_print(char *str)
+{
+	log_printf(&util_logger, str);
+}
+
+int OV7670_read_register(void *platform, uint8_t reg)
+{
+	uint8_t value;
+
+	ov7670_read(reg, &value);
+
+	return value;
+}
+
+void OV7670_write_register(void *platform, uint8_t reg, uint8_t value)
+{
+	ov7670_write(reg, value);
 }
