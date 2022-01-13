@@ -561,15 +561,16 @@ void run_camera(void)
 
 	const uint16_t width = 80;
 	const uint16_t height = 60;
+	const uint32_t format = FORMAT_YUYV;
 
-	OV7670_begin(&host, OV7670_COLOR_RGB, OV7670_SIZE_DIV8, 2.0);
+	OV7670_begin(&host, format == FORMAT_YUYV ? OV7670_COLOR_YUV : OV7670_COLOR_RGB, OV7670_SIZE_DIV8, 10.0);
 
 	struct camera camera;
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
 
-	camera_configure(&camera, FORMAT_RGB565, width, height);
+	camera_configure(&camera, format, width, height);
 
-	cam_buf = camera_buffer_alloc(FORMAT_RGB565, width, height);
+	cam_buf = camera_buffer_alloc(format, width, height);
 	assert(cam_buf);
 
 	struct camera_cmd cmd;

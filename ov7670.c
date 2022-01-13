@@ -55,10 +55,9 @@ static const OV7670_command
             // Manual output format, YUV, use full output range
             {OV7670_REG_COM7, OV7670_COM7_YUV},
             {OV7670_REG_COM15, OV7670_COM15_R00FF},
-            {OV7670_REG_COM13, 0x88 | OV7670_COM13_UVSWAP},
             {0xFF, 0xFF}},
     OV7670_init[] = {
-        {OV7670_REG_TSLB, OV7670_TSLB_YFIRST},    // No auto window
+        {OV7670_REG_TSLB, OV7670_TSLB_YLAST},    // No auto window
         //{OV7670_REG_COM10, OV7670_COM10_VS_NEG}, // -VSYNC (req by SAMD PCC)
         {OV7670_REG_SLOP, 0x20},
         {OV7670_REG_GAM_BASE, 0x1C},
@@ -199,8 +198,8 @@ OV7670_status OV7670_begin(OV7670_host *host, OV7670_colorspace colorspace,
   }
   OV7670_delay_ms(1000); // Datasheet: tS:RESET = 1 ms
 
-  //(void)OV7670_set_fps(host->platform, fps); // Timing
-  OV7670_write_register(host->platform, OV7670_REG_CLKRC, 1); // 1/32 div
+  (void)OV7670_set_fps(host->platform, fps); // Timing
+  //OV7670_write_register(host->platform, OV7670_REG_CLKRC, 1); // 1/32 div
   if (colorspace == OV7670_COLOR_RGB) {
     OV7670_write_list(host->platform, OV7670_rgb);
   } else {

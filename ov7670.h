@@ -199,7 +199,6 @@ typedef struct {
 #define OV7670_REG_TSLB 0x3A               //< Line buffer test option
 #define OV7670_TSLB_NEG 0x20               //< TSLB Negative image enable
 #define OV7670_TSLB_YLAST 0x04             //< TSLB UYVY or VYUY, see COM13
-#define OV7670_TSLB_YFIRST 0x0D            //< TSLB UYVY or VYUY, see COM13
 #define OV7670_TSLB_AOW 0x01               //< TSLB Auto output window
 #define OV7670_REG_COM11 0x3B              //< Common control 11
 #define OV7670_COM11_NIGHT 0x80            //< COM11 Night mode
