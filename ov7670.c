@@ -81,6 +81,8 @@ static const OV7670_command
         {OV7670_COM2_SSLEEP, 0x00},
         {OV7670_REG_COM4, 0x00},
         {OV7670_REG_COM9, 0x20}, // Max AGC value
+        {OV7670_REG_COM11, (1 << 3)}, // 50Hz
+        {0x9D, 99}, // Banding filter for 50 Hz at 15.625 MHz
         {OV7670_REG_BD50MAX, 0x05},
         {OV7670_REG_BD60MAX, 0x07},
         {OV7670_REG_AEW, 0x75},
