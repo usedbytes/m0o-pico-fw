@@ -19,14 +19,14 @@
 .wrap_target
 set X 7                                 ; Load the bit counter
 wait 1 irq 4 rel                        ; Wait to be triggered - waits for IRQ 4 + SM number
-wait 1 pin PIN_OFFS_PXCLK               ; Wait for PXCLK to go high
+wait 1 pin PIN_OFFS_PXCLK               ; Wait for PXCLK to go high (otherwise inputs are "transparent")
 
-loop_bit:
 nop side 0x1 [1]                        ; side set CLK
-in PINS 1 side 0x0 [1]                  ; Grab a bit of data, clear CLK
-jmp x-- loop_bit
+loop_bit:
+in PINS 1 side 0x0 [0]                  ; Grab a bit of data, clear CLK
+jmp x-- loop_bit side 0x1 [1]
 
-wait 0 pin PIN_OFFS_PXCLK               ; Wait for PXCLK to go low, clear CLK
+wait 0 pin PIN_OFFS_PXCLK side 0x0              ; Wait for PXCLK to go low
 .wrap
 
 % c-sdk {
@@ -79,9 +79,12 @@ static inline void camera_pio_init_gpios(PIO pio, uint sm, uint base_pin)
 {
     pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 5, false);
     pio_sm_set_consecutive_pindirs(pio, sm, base_pin + PIN_OFFS_CLK, 1, true);
+
     for (uint i = 0; i < 5; i++) {
         pio_gpio_init(pio, i + base_pin);
     }
+
+    pio->input_sync_bypass = (1 << (base_pin + PIN_OFFS_D0));
 }
 
 static inline pio_sm_config camera_pio_get_frame_sm_config(PIO pio, uint sm, uint offset, uint base_pin)

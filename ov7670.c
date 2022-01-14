@@ -199,8 +199,9 @@ OV7670_status OV7670_begin(OV7670_host *host, OV7670_colorspace colorspace,
   }
   OV7670_delay_ms(1000); // Datasheet: tS:RESET = 1 ms
 
-  (void)OV7670_set_fps(host->platform, fps); // Timing
-  //OV7670_write_register(host->platform, OV7670_REG_CLKRC, 1); // 1/32 div
+  //(void)OV7670_set_fps(host->platform, fps); // Timing
+  OV7670_write_register(host->platform, OV7670_REG_CLKRC, 1); // CLK * 4
+  OV7670_write_register(host->platform, OV7670_REG_DBLV, 1 << 6); // CLK / 4
   if (colorspace == OV7670_COLOR_RGB) {
     OV7670_write_list(host->platform, OV7670_rgb);
   } else {

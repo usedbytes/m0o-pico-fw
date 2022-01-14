@@ -563,7 +563,7 @@ void run_camera(void)
 	const uint16_t height = 60;
 	const uint32_t format = FORMAT_YUYV;
 
-	OV7670_begin(&host, format == FORMAT_YUYV ? OV7670_COLOR_YUV : OV7670_COLOR_RGB, OV7670_SIZE_DIV8, 10.0);
+	OV7670_begin(&host, format == FORMAT_YUYV ? OV7670_COLOR_YUV : OV7670_COLOR_RGB, OV7670_SIZE_DIV8, 20.0);
 
 	struct camera camera;
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
