@@ -44,9 +44,8 @@ struct bt_hid_state {
 static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
-extern const struct comm_command snap_cmd;
 extern const struct comm_command snapget_cmd;
-extern const struct comm_command camera_cmd;
+extern const struct comm_command camera_host_comm_cmd;
 
 // This list is ordered to try and put the most frequent messages near the start
 const struct comm_command *const cmds[] = {
@@ -61,9 +60,8 @@ const struct comm_command *const cmds[] = {
 	&util_logs_cmd,
 	&util_reboot_cmd,
 	&util_read_cmd,
-	&snap_cmd,
 	&snapget_cmd,
-	&camera_cmd,
+	&camera_host_comm_cmd,
 };
 const unsigned int N_CMDS = (sizeof(cmds) / sizeof(cmds[0]));
 
