@@ -48,6 +48,8 @@ static int ov7670_write(uint8_t addr, uint8_t value);
 static int ov7670_read(uint8_t addr, uint8_t *value);
 static int ov7670_init(void);
 
+static struct camera camera;
+
 static queue_t camera_queue;
 
 struct camera_buffer {
@@ -68,6 +70,8 @@ struct camera_config {
 	pio_sm_config sm_cfgs[4];
 };
 
+typedef void (*camera_frame_cb)(struct camera_buffer *buf, void *p);
+
 struct camera {
 	PIO pio;
 	OV7670_host host;
@@ -76,6 +80,10 @@ struct camera {
 	int dma_channels[3];
 
 	struct camera_config config;
+
+	volatile struct camera_buffer *pending;
+	volatile camera_frame_cb pending_cb;
+	volatile void *cb_data;
 };
 
 #define CAMERA_CMD_TRIGGER     1
@@ -101,7 +109,14 @@ struct camera_cmd {
 	uint32_t pdata;
 };
 
-volatile struct camera_buffer *cam_buf;
+struct camera_buffer *host_buf;
+volatile bool host_buf_ready;
+
+void host_buf_complete_cb(struct camera_buffer *buf, void *data)
+{
+	log_printf(&util_logger, "Frame done");
+	host_buf_ready = true;
+}
 
 static uint8_t format_num_planes(uint32_t format)
 {
@@ -319,10 +334,18 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 volatile bool go = false;
 volatile bool done = false;
 
-static void camera_isr(void)
+static void camera_isr_pio0(void)
 {
-	done = true;
+	if (!camera.pending) {
+		return;
+	}
+
+	if (camera.pending_cb) {
+		camera.pending_cb((struct camera_buffer *)camera.pending, (void *)camera.cb_data);
+	}
+
 	pio_interrupt_clear(CAMERA_PIO, 0);
+	camera.pending = NULL;
 }
 
 static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
@@ -344,20 +367,22 @@ static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
 		camera->dma_channels[i] = base_dma_chan + i;
 	}
 	camera->pio = pio;
-	irq_set_exclusive_handler(PIO0_IRQ_0, camera_isr);
+	irq_set_exclusive_handler(PIO0_IRQ_0, camera_isr_pio0);
 	camera_pio_init(camera);
 	irq_set_enabled(PIO0_IRQ_0, true);
 }
 
-static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
+static int camera_do_frame(struct camera *camera, struct camera_buffer *buf, camera_frame_cb complete_cb, void *cb_data)
 {
+	if (camera->pending) {
+		return -2;
+	}
+
 	if ((camera->config.format != buf->format) ||
 	    (camera->config.width != buf->width) ||
 	    (camera->config.height != buf->height)) {
-		return -1;
+		camera_configure(camera, buf->format, buf->width, buf->height);
 	}
-
-	done = false;
 
 	uint8_t num_planes = format_num_planes(camera->config.format);
 	for (int i = 0; i < num_planes; i++) {
@@ -370,6 +395,10 @@ static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
 	}
 
 	uint32_t num_loops = buf->width / format_pixels_per_chunk(buf->format);
+
+	camera->pending = buf;
+	camera->pending_cb = complete_cb;
+	camera->cb_data = cb_data;
 
 	camera_pio_trigger_frame(camera->pio, num_loops, buf->height);
 
@@ -447,10 +476,10 @@ static uint32_t size_snapget(uint32_t *args_in, uint32_t *data_len_out, uint32_t
 
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
-	if (done) {
-		memcpy(resp_data_out, cam_buf, sizeof(*cam_buf));
+	if (host_buf_ready) {
+		memcpy(resp_data_out, host_buf, sizeof(*host_buf));
 	} else {
-		memset(resp_data_out, 0, sizeof(*cam_buf));
+		memset(resp_data_out, 0, sizeof(*host_buf));
 	}
 
 	return COMM_RSP_OK;
@@ -588,7 +617,6 @@ void run_camera(void)
 	const uint16_t height = 60;
 	const uint32_t format = FORMAT_YUYV;
 
-	struct camera camera;
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
 	camera_configure(&camera, format, width, height);
 
@@ -597,7 +625,7 @@ void run_camera(void)
 	struct camera_buffer *rgb_buf = camera_buffer_alloc(FORMAT_RGB565, width, height);
 	assert(rgb_buf);
 
-	cam_buf = yuv_buf;
+	host_buf = yuv_buf;
 
 	struct camera_cmd cmd;
 	while (1) {
@@ -606,21 +634,19 @@ void run_camera(void)
 		switch (cmd.cmd) {
 		case CAMERA_CMD_FORMAT:
 			if (cmd.format.format_idx == 0) {
-				log_printf(&util_logger, "Configure YUV");
-				cam_buf = yuv_buf;
-				camera_configure(&camera, FORMAT_YUYV, width, height);
+				log_printf(&util_logger, "Set YUV");
+				host_buf = yuv_buf;
+				//camera_configure(&camera, FORMAT_YUYV, width, height);
 			} else {
-				log_printf(&util_logger, "Configure RGB");
-				cam_buf = rgb_buf;
-				camera_configure(&camera, FORMAT_RGB565, width, height);
+				log_printf(&util_logger, "Set RGB");
+				host_buf = rgb_buf;
+				//camera_configure(&camera, FORMAT_RGB565, width, height);
 			}
 			break;
 		case CAMERA_CMD_TRIGGER:
+			host_buf_ready = false;
 			log_printf(&util_logger, "Start frame");
-			camera_do_frame(&camera, cam_buf);
-			log_printf(&util_logger, "Waiting");
-			while (!done);
-			log_printf(&util_logger, "Frame done");
+			camera_do_frame(&camera, host_buf, host_buf_complete_cb, NULL);
 			break;
 		}
 	}
