@@ -309,6 +309,8 @@ extern "C" {
 OV7670_status OV7670_begin(OV7670_host *host, OV7670_colorspace colorspace,
                            OV7670_size size, float fps);
 
+OV7670_status OV7670_set_format(void *platform, OV7670_colorspace colorspace);
+
 // Configure camera frame rate. Actual resulting frame rate (returned) may
 // be different depending on available clock frequencies. Result will only
 // exceed input if necessary for minimum supported rate, but this is very

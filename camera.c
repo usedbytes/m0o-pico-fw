@@ -14,6 +14,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
+#include "hardware/irq.h"
 #include "hardware/pio.h"
 
 #include "log.h"
@@ -69,6 +70,7 @@ struct camera_config {
 
 struct camera {
 	PIO pio;
+	OV7670_host host;
 	uint frame_offset;
 	uint shift_byte_offset;
 	int dma_channels[3];
@@ -79,6 +81,7 @@ struct camera {
 #define CAMERA_CMD_TRIGGER     1
 #define CAMERA_CMD_GET_REG_BUF 2
 #define CAMERA_CMD_INIT        3
+#define CAMERA_CMD_FORMAT      4
 
 uint8_t reg_buffer[256];
 
@@ -89,13 +92,16 @@ struct camera_cmd {
 			uint8_t n_regs;
 		} set_reg_buffer;
 		struct {
+			uint8_t format_idx;
+		} format;
+		struct {
 			uint8_t pad[3];
 		} pad;
 	};
 	uint32_t pdata;
 };
 
-struct camera_buffer *cam_buf;
+volatile struct camera_buffer *cam_buf;
 
 static uint8_t format_num_planes(uint32_t format)
 {
@@ -234,6 +240,7 @@ static void camera_pio_init(struct camera *camera)
 	for (int i = 0; i < 4; i++) {
 		camera_pio_init_gpios(camera->pio, i, PIN_D0);
 	}
+	camera->pio->inte0 = (1 << (8 + CAMERA_PIO_FRAME_SM));
 }
 
 static void camera_pio_configure(struct camera *camera)
@@ -262,13 +269,27 @@ static void camera_pio_configure(struct camera *camera)
 	pio_sm_set_enabled(camera->pio, CAMERA_PIO_FRAME_SM, true);
 }
 
+static OV7670_colorspace format_to_colorspace(uint32_t format)
+{
+	switch (format) {
+	case FORMAT_RGB565:
+		return OV7670_COLOR_RGB;
+	case FORMAT_YUYV:
+		return OV7670_COLOR_YUV;
+	}
+
+	return 0;
+}
+
 static void camera_configure(struct camera *camera, uint32_t format, uint16_t width, uint16_t height)
 {
 	camera->config.format = format;
 	camera->config.width = width;
 	camera->config.height = height;
 
-	// TODO: Reconfigure ov7670
+	OV7670_set_format(camera->host.platform, format_to_colorspace(format));
+	// TODO: Handle other sizes
+	OV7670_set_size(camera->host.platform, OV7670_SIZE_DIV8);
 
 	camera->config.sm_cfgs[CAMERA_PIO_FRAME_SM] =
 		camera_pio_get_frame_sm_config(camera->pio, CAMERA_PIO_FRAME_SM, camera->frame_offset, PIN_D0);
@@ -295,18 +316,37 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 	camera_pio_configure(camera);
 }
 
+volatile bool go = false;
+volatile bool done = false;
+
+static void camera_isr(void)
+{
+	done = true;
+	pio_interrupt_clear(CAMERA_PIO, 0);
+}
+
 static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
 {
-	//ov7670_init();
-
 	*camera = (struct camera){ 0 };
+
+	camera->host = (OV7670_host){
+		.pins = &(OV7670_pins){
+			.enable = -1,
+			.reset = -1,
+		},
+		.platform = camera,
+	};
+
+	OV7670_begin(&camera->host, OV7670_COLOR_YUV, OV7670_SIZE_DIV8, 20.0);
 
 	dma_claim_mask(((1 << CAMERA_MAX_N_PLANES) - 1) << base_dma_chan);
 	for (int i = 0; i < CAMERA_MAX_N_PLANES; i++) {
 		camera->dma_channels[i] = base_dma_chan + i;
 	}
 	camera->pio = pio;
+	irq_set_exclusive_handler(PIO0_IRQ_0, camera_isr);
 	camera_pio_init(camera);
+	irq_set_enabled(PIO0_IRQ_0, true);
 }
 
 static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
@@ -316,6 +356,8 @@ static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
 	    (camera->config.height != buf->height)) {
 		return -1;
 	}
+
+	done = false;
 
 	uint8_t num_planes = format_num_planes(camera->config.format);
 	for (int i = 0; i < num_planes; i++) {
@@ -338,9 +380,6 @@ static void camera_wait_for_completion(struct camera *camera)
 {
 	camera_pio_wait_for_frame_done(camera->pio);
 }
-
-volatile bool go = false;
-volatile bool done = false;
 
 static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
@@ -545,46 +584,42 @@ void run_camera(void)
 		return;
 	}
 
-	typedef struct {
-	  OV7670_arch *arch; ///< Architecture-specific config data
-	  OV7670_pins *pins; ///< Physical connection to camera
-	  void *platform;    ///< Platform-specific data (e.g. Arduino C++ object)
-	} OV7670_host;
-
-	OV7670_host host = {
-		.pins = &(OV7670_pins){
-			.enable = -1,
-			.reset = -1,
-		},
-		.platform = &host,
-	};
-
 	const uint16_t width = 80;
 	const uint16_t height = 60;
 	const uint32_t format = FORMAT_YUYV;
 
-	OV7670_begin(&host, format == FORMAT_YUYV ? OV7670_COLOR_YUV : OV7670_COLOR_RGB, OV7670_SIZE_DIV8, 20.0);
-
 	struct camera camera;
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
-
 	camera_configure(&camera, format, width, height);
 
-	cam_buf = camera_buffer_alloc(format, width, height);
-	assert(cam_buf);
+	struct camera_buffer *yuv_buf = camera_buffer_alloc(FORMAT_YUYV, width, height);
+	assert(yuv_buf);
+	struct camera_buffer *rgb_buf = camera_buffer_alloc(FORMAT_RGB565, width, height);
+	assert(rgb_buf);
+
+	cam_buf = yuv_buf;
 
 	struct camera_cmd cmd;
 	while (1) {
 		queue_remove_blocking(&camera_queue, &cmd);
 
 		switch (cmd.cmd) {
+		case CAMERA_CMD_FORMAT:
+			if (cmd.format.format_idx == 0) {
+				log_printf(&util_logger, "Configure YUV");
+				cam_buf = yuv_buf;
+				camera_configure(&camera, FORMAT_YUYV, width, height);
+			} else {
+				log_printf(&util_logger, "Configure RGB");
+				cam_buf = rgb_buf;
+				camera_configure(&camera, FORMAT_RGB565, width, height);
+			}
+			break;
 		case CAMERA_CMD_TRIGGER:
-			done = false;
 			log_printf(&util_logger, "Start frame");
 			camera_do_frame(&camera, cam_buf);
 			log_printf(&util_logger, "Waiting");
-			camera_wait_for_completion(&camera);
-			done = true;
+			while (!done);
 			log_printf(&util_logger, "Frame done");
 			break;
 		}

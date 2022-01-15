@@ -204,11 +204,7 @@ OV7670_status OV7670_begin(OV7670_host *host, OV7670_colorspace colorspace,
   //(void)OV7670_set_fps(host->platform, fps); // Timing
   OV7670_write_register(host->platform, OV7670_REG_CLKRC, 1); // CLK * 4
   OV7670_write_register(host->platform, OV7670_REG_DBLV, 1 << 6); // CLK / 4
-  if (colorspace == OV7670_COLOR_RGB) {
-    OV7670_write_list(host->platform, OV7670_rgb);
-  } else {
-    OV7670_write_list(host->platform, OV7670_yuv);
-  }
+  OV7670_set_format(host->platform, colorspace);
   OV7670_write_list(host->platform, OV7670_init); // Other config
   OV7670_set_size(host->platform, size);          // Frame size
 
@@ -230,6 +226,16 @@ OV7670_status OV7670_begin(OV7670_host *host, OV7670_colorspace colorspace,
 // rates because it varies with architecture, depending on OV7670_XCLK_HZ.
 // If platform is NULL, no registers are set, a fps request/return can be
 // evaluated without reconfiguring the camera, or without it even started.
+
+OV7670_status OV7670_set_format(void *platform, OV7670_colorspace colorspace) {
+  if (colorspace == OV7670_COLOR_RGB) {
+    OV7670_write_list(platform, OV7670_rgb);
+  } else {
+    OV7670_write_list(platform, OV7670_yuv);
+  }
+
+  return OV7670_STATUS_OK;
+}
 
 float OV7670_set_fps(void *platform, float fps) {
 
