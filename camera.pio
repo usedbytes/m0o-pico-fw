@@ -19,14 +19,14 @@
 .wrap_target
 set X 7                                 ; Load the bit counter
 wait 1 irq 4 rel                        ; Wait to be triggered - waits for IRQ 4 + SM number
-wait 1 pin PIN_OFFS_PXCLK               ; Wait for PXCLK to go high (otherwise inputs are "transparent")
+wait 1 pin PIN_OFFS_PXCLK [5]           ; Wait for PXCLK to go high (otherwise inputs are "transparent")
 
 nop side 0x1 [1]                        ; side set CLK
 loop_bit:
 in PINS 1 side 0x0 [0]                  ; Grab a bit of data, clear CLK
 jmp x-- loop_bit side 0x1 [1]
 
-wait 0 pin PIN_OFFS_PXCLK side 0x0              ; Wait for PXCLK to go low
+wait 0 pin PIN_OFFS_PXCLK side 0x0      ; Wait for PXCLK to go low
 .wrap
 
 % c-sdk {
@@ -53,7 +53,7 @@ wait 1 pin PIN_OFFS_VSYNC              ; Wait for start of frame
 
 loop_line:
 mov X, OSR                             ; Store number of pixels in X
-wait 1 pin PIN_OFFS_HREF               ; Wait for start of line
+wait 1 pin PIN_OFFS_HREF [2]           ; Wait for start of line
 
 ; The pixel loop body can be patched for different pixel formats / plane
 ; layouts. Up to 4 bytes per pixel.

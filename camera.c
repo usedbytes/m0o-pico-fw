@@ -700,8 +700,8 @@ void run_camera(void)
 	log_printf(&util_logger, "run_camera()");
 	queue_init(&camera_queue, sizeof(struct camera_queue_item), 8);
 
-	// 125 MHz / 8 = 15.625 MHz
-	clock_gpio_init(GPIO_XCLK, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 8);
+	// 125 MHz / 8 = 13.8 MHz
+	clock_gpio_init(GPIO_XCLK, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 9);
 
 	i2c_init(I2C_BUS, 100000);
 	gpio_set_function(I2C_PIN_SDA, GPIO_FUNC_I2C);
@@ -734,7 +734,7 @@ void run_camera(void)
 	qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
 	qitem.capture.buf = local_buf;
 	qitem.capture.frame_cb = local_capture_cb;
-	queue_add_blocking(&camera_queue, &qitem);
+	//queue_add_blocking(&camera_queue, &qitem);
 
 	while (1) {
 		queue_remove_blocking(&camera_queue, &qitem);
