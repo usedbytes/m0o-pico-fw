@@ -89,6 +89,7 @@ enum camera_queue_item_type {
 	CAMERA_QUEUE_ITEM_CAPTURE = 0,
 	CAMERA_QUEUE_ITEM_HOST_ALLOC,
 	CAMERA_QUEUE_ITEM_LOCAL_PROCESS,
+	CAMERA_QUEUE_ITEM_HOST_COMPLETE,
 };
 
 struct camera_queue_item {
@@ -473,6 +474,10 @@ void host_capture_cb(struct camera_buffer *buf, void *data)
 {
 	log_printf(&util_logger, "Host frame done");
 	host_state = HOST_STATE_COMPLETE;
+
+	struct camera_queue_item qitem;
+	qitem.type = CAMERA_QUEUE_ITEM_HOST_COMPLETE;
+	queue_try_add(&camera_queue, &qitem);
 }
 
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
@@ -685,56 +690,88 @@ void local_capture_cb(struct camera_buffer *buf, void *data)
 	queue_add_blocking(&camera_queue, &qitem);
 }
 
+const uint8_t thresh = 10;
+
+static void do_row(uint8_t *row, int len, int idx, uint8_t maxval, int *left_out, int *right_out)
+{
+	int i;
+
+	int left = idx;
+	int right = idx;
+
+	for (i = idx; i >= 0; i--) {
+		if (maxval - row[i] <= thresh) {
+			left = i;
+		} else {
+			break;
+		}
+	}
+
+
+	for (i = idx + 1; i < len; i++) {
+		if (maxval - row[i] <= thresh) {
+			right = i;
+		} else {
+			break;
+		}
+	}
+
+	*left_out = left;
+	*right_out = right;
+}
+
 static int process_frame(struct camera_buffer *buf)
 {
 	uint32_t start = time_us_32();
-	//log_printf(&util_logger, "Process start");
-	uint16_t x, y;
 
-	uint8_t min = 255;
-	uint8_t max = 0;
-
-	for (y = 23; y < buf->height; y++) {
-		for (x = 3; x < (buf->width - 2) * 2; x += 4) {
-			uint8_t pix = buf->data[0][buf->strides[0] * y + x];
-			if (pix < min) {
-				min = pix;
-			}
-
-			if (pix > max) {
-				max = pix;
-			}
-		}
-	}
-
-	if (max - min < 30) {
-		//log_printf(&util_logger, "Process end. No target");
+	if (buf->format != FORMAT_YUV422) {
 		return -1;
 	}
 
-	min = max - 3;
-
-	uint8_t left = 0, right = 0;
-
-	for (y = buf->height / 2; y <= buf->height / 2; y++) {
-		for (x = 3; x < (buf->width - 2) * 2; x += 4) {
-			uint8_t pix = buf->data[0][buf->strides[0] * y + x];
-			if (pix < min) {
-				continue;
-			}
-
-			if (left == 0) {
-				left = x;
-			} else {
-				right = x;
+	int x, y;
+	uint8_t maxval = 0;
+	int max_x = 0, max_y = 0;
+	// Find the brightest (Cr) pixel
+	for (y = 0; y < buf->height; y++) {
+		for (x = 0; x < buf->width / 2; x++) {
+			uint8_t pix = buf->data[2][buf->strides[2] * y + x];
+			if (pix > maxval) {
+				maxval = pix;
+				max_x = x;
+				max_y = y;
 			}
 		}
 	}
 
-	//log_printf(&util_logger, "Process end. min, max %d, %d", min, max);
-	//log_printf(&util_logger, "Middle: %d", left + ((right - left) / 2));
+	log_printf(&util_logger, "maxval: %d", maxval);
 
-	uint8_t mid = (left + ((right - left) / 2)) / 2;
+	int l = max_x, r = max_x, a, b;
+	int idx = max_x;
+	for (y = max_y; y >= 0; y--) {
+		uint8_t *row = &buf->data[2][buf->strides[2] * y];
+		if (maxval - row[idx] < thresh) {
+			do_row(row, buf->width / 2, idx, maxval, &a, &b);
+			l = a < l ? a : l;
+			r = b > r ? b : r;
+		} else {
+			break;
+		}
+	}
+
+	idx = max_x;
+	for (y = max_y; y < buf->height; y++) {
+		uint8_t *row = &buf->data[2][buf->strides[2] * y];
+		if (maxval - row[idx] < thresh) {
+			do_row(row, buf->width / 2, idx, maxval, &a, &b);
+			l = a < l ? a : l;
+			r = b > r ? b : r;
+		} else {
+			break;
+		}
+	}
+
+	int mid = l + (r - l) / 2;
+
 	log_printf(&util_logger, "Process done. %d us, mid %d", time_us_32() - start, mid);
 	return mid;
 }
@@ -766,20 +803,21 @@ void run_camera(void)
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
 	camera_configure(&camera, format, width, height);
 
-	host_buf = camera_buffer_alloc(FORMAT_YUYV, width, height);
+	host_buf = camera_buffer_alloc(FORMAT_YUV422, width, height);
 	assert(host_buf);
 	host_state = HOST_STATE_IDLE;
 
 	int ret;
 	int pos;
-	struct camera_queue_item qitem;
+	struct camera_queue_item local_capture_qitem;
 
-	struct camera_buffer *local_buf = camera_buffer_alloc(FORMAT_YUYV, width, height);
-	qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
-	qitem.capture.buf = local_buf;
-	qitem.capture.frame_cb = local_capture_cb;
+	struct camera_buffer *local_buf = camera_buffer_alloc(FORMAT_YUV422, width, height);
+	local_capture_qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
+	local_capture_qitem.capture.buf = local_buf;
+	local_capture_qitem.capture.frame_cb = local_capture_cb;
 	//queue_add_blocking(&camera_queue, &qitem);
 
+	struct camera_queue_item qitem;
 	while (1) {
 		queue_remove_blocking(&camera_queue, &qitem);
 		switch (qitem.type) {
@@ -790,7 +828,7 @@ void run_camera(void)
 				log_printf(&util_logger, "Failed %d", ret);
 				// FIXME: How to better handle re-submit?
 				// Also, this could deadlock...
-				sleep_ms(5);
+				sleep_ms(15);
 				queue_add_blocking(&camera_queue, &qitem);
 			}
 			break;
@@ -816,13 +854,12 @@ void run_camera(void)
 			struct camera_buffer *buf = qitem.local_process.buf;
 			pos = process_frame(buf);
 			log_printf(&util_logger, "Middle: %d", pos);
-			sleep_ms(100);
-			qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
-			qitem.capture.buf = buf;
-			qitem.capture.frame_cb = local_capture_cb;
-			queue_add_blocking(&camera_queue, &qitem);
 			break;
 			}
+		case CAMERA_QUEUE_ITEM_HOST_COMPLETE:
+			// TODO: Could deadlock
+			queue_add_blocking(&camera_queue, &local_capture_qitem);
+			break;
 		}
 	}
 }
