@@ -12,13 +12,14 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 add_executable(rebound
-	main.c
-	log.c
-	comm.c
-	util.c
-	camera.c
 	bno055.c
+	camera.c
 	chassis.c
+	comm.c
+	log.c
+	main.c
+	ov7670.c
+	util.c
 	vl53l0x.c
 )
 
@@ -37,6 +38,7 @@ target_link_libraries(rebound
 	pico_stdlib
 	pico_stdlib_headers
 	pico_sync
+	pico_util
 	hardware_i2c
 	hardware_dma
 	hardware_pio

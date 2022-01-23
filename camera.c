@@ -9,39 +9,46 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "pico/util/queue.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
+#include "hardware/irq.h"
 #include "hardware/pio.h"
 
 #include "log.h"
 #include "util.h"
-#include "ov7670_reg.h"
+//#include "ov7670_reg.h"
+#include "ov7670.h"
 
 #include "camera.pio.h"
 
-#define I2C_BUS      i2c1
-#define I2C_PIN_SDA  10
-#define I2C_PIN_SCL  11
+#define I2C_BUS      i2c0
+#define I2C_PIN_SDA  0
+#define I2C_PIN_SCL  1
 #define PIN_D0       16
-
-#define IMG_W 160
-#define IMG_H 72
 
 #define CAMERA_PIO           pio0
 #define CAMERA_PIO_FRAME_SM  0
 #define CAMERA_DMA_CHAN_BASE 0
-#define CAMERA_MAX_N_PLANES  1
+#define CAMERA_MAX_N_PLANES  3
 
 #define CMD_SNAP    (('S' << 0) | ('N' << 8) | ('A' << 16) | ('P' << 24))
 #define CMD_SNAPGET (('S' << 0) | ('G' << 8) | ('E' << 16) | ('T' << 24))
+#define CMD_CAMERA  (('C' << 0) | ('A' << 8) | ('M' << 16) | ('C' << 24))
 
 #define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
+#define FORMAT_RGB565 (('R' << 0) | ('G' << 8) | ('1' << 16) | ('6' << 24))
+#define FORMAT_YUV422 (('Y' << 0) | ('U' << 8) | ('1' << 16) | ('6' << 24))
 
 static int ov7670_write(uint8_t addr, uint8_t value);
 static int ov7670_read(uint8_t addr, uint8_t *value);
 static int ov7670_init(void);
+
+static struct camera camera;
+
+static queue_t camera_queue;
 
 struct camera_buffer {
 	uint32_t format;
@@ -57,26 +64,85 @@ struct camera_config {
 	uint16_t width;
 	uint16_t height;
 	uint dma_transfers[3];
+	uint dma_offset[3];
 	dma_channel_config dma_cfgs[3];
 	pio_sm_config sm_cfgs[4];
 };
 
+typedef void (*camera_frame_cb)(struct camera_buffer *buf, void *p);
+
 struct camera {
 	PIO pio;
+	OV7670_host host;
 	uint frame_offset;
 	uint shift_byte_offset;
 	int dma_channels[3];
 
 	struct camera_config config;
+
+	volatile struct camera_buffer *pending;
+	volatile camera_frame_cb pending_cb;
+	volatile void *cb_data;
 };
 
-struct camera_buffer *cam_buf;
+enum camera_queue_item_type {
+	CAMERA_QUEUE_ITEM_CAPTURE = 0,
+	CAMERA_QUEUE_ITEM_HOST_ALLOC,
+	CAMERA_QUEUE_ITEM_LOCAL_PROCESS,
+	CAMERA_QUEUE_ITEM_HOST_COMPLETE,
+};
+
+struct camera_queue_item {
+	uint8_t type;
+	uint8_t pad[3];
+	union {
+		struct {
+			struct camera_buffer *buf;
+			camera_frame_cb frame_cb;
+			void *cb_data;
+		} capture;
+		struct {
+			struct camera_buffer *buf;
+		} local_process;
+		struct {
+			uint32_t format;
+		} host_alloc;
+		struct {
+			uint32_t pad[3];
+		} body_pad;
+	};
+};
+
+#define CAMERA_HOST_CMD_TRIGGER     1
+#define CAMERA_HOST_CMD_GET_REG_BUF 2
+#define CAMERA_HOST_CMD_INIT        3
+#define CAMERA_HOST_CMD_FORMAT      4
+
+struct camera_host_cmd {
+	uint8_t cmd;
+	union {
+		struct {
+			uint8_t n_regs;
+		} set_reg_buffer;
+		struct {
+			uint8_t format_idx;
+		} format;
+		struct {
+			uint8_t pad[3];
+		} pad;
+	};
+	uint32_t pdata;
+};
 
 static uint8_t format_num_planes(uint32_t format)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return 1;
+	case FORMAT_YUV422:
+		return 3;
 	default:
 		return 0;
 	}
@@ -86,7 +152,11 @@ static uint8_t format_bytes_per_pixel(uint32_t format, uint8_t plane)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return 2;
+	case FORMAT_YUV422:
+		return 1;
 	default:
 		return 0;
 	}
@@ -96,6 +166,10 @@ static uint8_t format_pixels_per_chunk(uint32_t format)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
+		return 2;
+	case FORMAT_YUV422:
 		return 2;
 	default:
 		return 1;
@@ -106,7 +180,11 @@ static enum dma_channel_transfer_size format_transfer_size(uint32_t format, uint
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return DMA_SIZE_32;
+	case FORMAT_YUV422:
+		return plane ? DMA_SIZE_8 : DMA_SIZE_16;
 	default:
 		return 0;
 	}
@@ -130,7 +208,11 @@ static uint8_t format_hsub(uint32_t format, uint8_t plane)
 {
 	switch (format) {
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_RGB565:
 		return 1;
+	case FORMAT_YUV422:
+		return plane ? 2 : 1;
 	default:
 		return 0;
 	}
@@ -146,8 +228,28 @@ static uint32_t format_plane_size(uint32_t format, uint8_t plane, uint16_t width
 	return format_stride(format, plane, width) * height;
 }
 
+static const pio_program_t *format_get_pixel_loop(uint32_t format)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return &pixel_loop_yuyv_program;
+	case FORMAT_RGB565:
+		// XXX: Should really use a 16-bit loop and swap to 2 bytes
+		// per chunk instead of 4.
+		return &pixel_loop_yuyv_program;
+	case FORMAT_YUV422:
+		return &pixel_loop_yu16_program;
+	default:
+		return NULL;
+	}
+}
+
 static void camera_buffer_free(struct camera_buffer *buf)
 {
+	if (buf == NULL) {
+		return;
+	}
+
 	uint8_t num_planes = format_num_planes(buf->format);
 	for (int i = 0; i < num_planes; i++) {
 		if (buf->data[i]) {
@@ -199,6 +301,7 @@ static void camera_pio_init(struct camera *camera)
 	for (int i = 0; i < 4; i++) {
 		camera_pio_init_gpios(camera->pio, i, PIN_D0);
 	}
+	camera->pio->inte0 = (1 << (8 + CAMERA_PIO_FRAME_SM));
 }
 
 static void camera_pio_configure(struct camera *camera)
@@ -214,7 +317,9 @@ static void camera_pio_configure(struct camera *camera)
 		pio_sm_clear_fifos(camera->pio, i);
 	}
 
-	// TODO: Patch the pixel loop
+	// Patch the pixel loop
+	const pio_program_t *pixel_loop = format_get_pixel_loop(camera->config.format);
+	camera_pio_patch_pixel_loop(camera->pio, camera->frame_offset, pixel_loop);
 
 	// Finally we can configure and enable the state machines
 	uint8_t num_planes = format_num_planes(camera->config.format);
@@ -227,13 +332,29 @@ static void camera_pio_configure(struct camera *camera)
 	pio_sm_set_enabled(camera->pio, CAMERA_PIO_FRAME_SM, true);
 }
 
+static OV7670_colorspace format_to_colorspace(uint32_t format)
+{
+	switch (format) {
+	case FORMAT_RGB565:
+		return OV7670_COLOR_RGB;
+	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_YUV422:
+		return OV7670_COLOR_YUV;
+	}
+
+	return 0;
+}
+
 static void camera_configure(struct camera *camera, uint32_t format, uint16_t width, uint16_t height)
 {
 	camera->config.format = format;
 	camera->config.width = width;
 	camera->config.height = height;
 
-	// TODO: Reconfigure ov7670
+	OV7670_set_format(camera->host.platform, format_to_colorspace(format));
+	// TODO: Handle other sizes
+	OV7670_set_size(camera->host.platform, OV7670_SIZE_DIV8);
 
 	camera->config.sm_cfgs[CAMERA_PIO_FRAME_SM] =
 		camera_pio_get_frame_sm_config(camera->pio, CAMERA_PIO_FRAME_SM, camera->frame_offset, PIN_D0);
@@ -250,36 +371,67 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 		camera->config.dma_cfgs[i] = c;
 
 		uint8_t xfer_bytes = __dma_transfer_size_to_bytes(xfer_size);
+		camera->config.dma_offset[i] = 4 - xfer_bytes,
 		camera->config.dma_transfers[i] = format_plane_size(format, i, width, height) / xfer_bytes,
 
 		camera->config.sm_cfgs[i + 1] = camera_pio_get_shift_byte_sm_config(camera->pio, i + 1,
 							camera->shift_byte_offset, PIN_D0,
 							xfer_bytes * 8);
+		log_printf(&util_logger, "dma_cfg %d, xfer_size %d %d bytes, transfers: %d, offset: %d",
+				i, xfer_size, xfer_bytes, camera->config.dma_transfers[i], camera->config.dma_offset[i]);
 	}
 
 	camera_pio_configure(camera);
 }
 
+static void camera_isr_pio0(void)
+{
+	if (!camera.pending) {
+		return;
+	}
+
+	if (camera.pending_cb) {
+		camera.pending_cb((struct camera_buffer *)camera.pending, (void *)camera.cb_data);
+	}
+
+	pio_interrupt_clear(CAMERA_PIO, 0);
+	camera.pending = NULL;
+}
+
 static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
 {
-	ov7670_init();
-
 	*camera = (struct camera){ 0 };
+
+	camera->host = (OV7670_host){
+		.pins = &(OV7670_pins){
+			.enable = -1,
+			.reset = -1,
+		},
+		.platform = camera,
+	};
+
+	OV7670_begin(&camera->host, OV7670_COLOR_YUV, OV7670_SIZE_DIV8, 20.0);
 
 	dma_claim_mask(((1 << CAMERA_MAX_N_PLANES) - 1) << base_dma_chan);
 	for (int i = 0; i < CAMERA_MAX_N_PLANES; i++) {
 		camera->dma_channels[i] = base_dma_chan + i;
 	}
 	camera->pio = pio;
+	irq_set_exclusive_handler(PIO0_IRQ_0, camera_isr_pio0);
 	camera_pio_init(camera);
+	irq_set_enabled(PIO0_IRQ_0, true);
 }
 
-static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
+static int camera_do_frame(struct camera *camera, struct camera_buffer *buf, camera_frame_cb complete_cb, void *cb_data)
 {
+	if (camera->pending) {
+		return -2;
+	}
+
 	if ((camera->config.format != buf->format) ||
 	    (camera->config.width != buf->width) ||
 	    (camera->config.height != buf->height)) {
-		return -1;
+		camera_configure(camera, buf->format, buf->width, buf->height);
 	}
 
 	uint8_t num_planes = format_num_planes(camera->config.format);
@@ -287,12 +439,16 @@ static int camera_do_frame(struct camera *camera, struct camera_buffer *buf)
 		dma_channel_configure(camera->dma_channels[i],
 				&camera->config.dma_cfgs[i],
 				buf->data[i],
-				&camera->pio->rxf[i + 1],
+				((char *)&camera->pio->rxf[i + 1]) + camera->config.dma_offset[i],
 				camera->config.dma_transfers[i],
 				true);
 	}
 
 	uint32_t num_loops = buf->width / format_pixels_per_chunk(buf->format);
+
+	camera->pending = buf;
+	camera->pending_cb = complete_cb;
+	camera->cb_data = cb_data;
 
 	camera_pio_trigger_frame(camera->pio, num_loops, buf->height);
 
@@ -304,20 +460,88 @@ static void camera_wait_for_completion(struct camera *camera)
 	camera_pio_wait_for_frame_done(camera->pio);
 }
 
-volatile bool go = false;
-volatile bool done = false;
+enum host_state {
+	HOST_STATE_NO_BUFFER = 0,
+	HOST_STATE_IDLE,
+	HOST_STATE_PENDING,
+	HOST_STATE_COMPLETE,
+};
 
-static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
+volatile enum host_state host_state;
+struct camera_buffer *host_buf;
+
+void host_capture_cb(struct camera_buffer *buf, void *data)
+{
+	log_printf(&util_logger, "Host frame done");
+	host_state = HOST_STATE_COMPLETE;
+
+	struct camera_queue_item qitem;
+	qitem.type = CAMERA_QUEUE_ITEM_HOST_COMPLETE;
+	queue_try_add(&camera_queue, &qitem);
+}
+
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_snapget(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
+static uint32_t handle_camera_cmd(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 
-const struct comm_command snap_cmd = {
-	.opcode = CMD_SNAP,
-	.nargs = 0,
-	.resp_nargs = 0,
+const struct comm_command camera_host_comm_cmd = {
+	.opcode = CMD_CAMERA,
+	.nargs = 2,
+	.resp_nargs = 2,
 	.size = NULL,
-	.handle = &handle_snap,
+	.handle = &handle_camera_cmd,
 };
+
+static uint32_t handle_camera_cmd(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
+{
+	struct camera_host_cmd *cmd_in = (struct camera_host_cmd *)args_in;
+	struct camera_queue_item qitem;
+
+	switch (cmd_in->cmd) {
+	case CAMERA_HOST_CMD_FORMAT:
+		if (host_state == HOST_STATE_PENDING) {
+			log_printf(&util_logger, "capture pending, can't free");
+		}
+
+		host_state = HOST_STATE_NO_BUFFER;
+		camera_buffer_free((struct camera_buffer *)host_buf);
+		host_buf = NULL;
+
+		qitem.type = CAMERA_QUEUE_ITEM_HOST_ALLOC;
+		switch (cmd_in->format.format_idx) {
+		case 0:
+			qitem.host_alloc.format = FORMAT_YUYV;
+			break;
+		case 1:
+			qitem.host_alloc.format = FORMAT_RGB565;
+			break;
+		case 2:
+			qitem.host_alloc.format = FORMAT_YUV422;
+			break;
+		default:
+			qitem.host_alloc.format = FORMAT_RGB565;
+			break;
+		}
+		queue_try_add(&camera_queue, &qitem);
+		break;
+	case CAMERA_HOST_CMD_TRIGGER:
+		if (host_state == HOST_STATE_NO_BUFFER) {
+			log_printf(&util_logger, "no host buffer");
+		}
+
+		host_state = HOST_STATE_PENDING;
+
+		qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
+		qitem.capture.buf = host_buf;
+		qitem.capture.frame_cb = host_capture_cb;
+		queue_try_add(&camera_queue, &qitem);
+		break;
+	default:
+		return COMM_RSP_ERR;
+	}
+
+	return COMM_RSP_OK;
+}
 
 const struct comm_command snapget_cmd = {
 	// SGET w h addr size
@@ -327,14 +551,6 @@ const struct comm_command snapget_cmd = {
 	.size = &size_snapget,
 	.handle = &handle_snapget,
 };
-
-static uint32_t handle_snap(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
-{
-	go = true;
-	done = false;
-
-	return COMM_RSP_OK;
-}
 
 static uint32_t size_snapget(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
 {
@@ -346,10 +562,10 @@ static uint32_t size_snapget(uint32_t *args_in, uint32_t *data_len_out, uint32_t
 
 static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
-	if (done) {
-		memcpy(resp_data_out, cam_buf, sizeof(*cam_buf));
+	if (host_state == HOST_STATE_COMPLETE) {
+		memcpy(resp_data_out, host_buf, sizeof(*host_buf));
 	} else {
-		memset(resp_data_out, 0, sizeof(*cam_buf));
+		memset(resp_data_out, 0, sizeof(*host_buf));
 	}
 
 	return COMM_RSP_OK;
@@ -406,7 +622,6 @@ static int ov7670_init(void) {
 	ov7670_write(OV7670_REG_COM3, 0x0C);
 	/* Stop PCLK during Hblank */
 	ov7670_write(OV7670_REG_COM10, (1 << 5));
-#endif
 
 	/*
 	// Preset QCIF from OV7670 IM
@@ -431,6 +646,7 @@ static int ov7670_init(void) {
 	ov7670_write(OV7670_REG_SCPCLK, 0xF2);
 	ov7670_write(OV7670_REG_SCPDLY, 0x2A);
 
+#endif
 	return 0;
 }
 
@@ -463,14 +679,110 @@ static bool ov7670_detect(void)
 	return true;
 }
 
+void local_capture_cb(struct camera_buffer *buf, void *data)
+{
+	struct camera_queue_item qitem;
+
+	//log_printf(&util_logger, "Local frame done");
+
+	qitem.type = CAMERA_QUEUE_ITEM_LOCAL_PROCESS;
+	qitem.local_process.buf = buf;
+	queue_add_blocking(&camera_queue, &qitem);
+}
+
+const uint8_t thresh = 10;
+
+static void do_row(uint8_t *row, int len, int idx, uint8_t maxval, int *left_out, int *right_out)
+{
+	int i;
+
+	int left = idx;
+	int right = idx;
+
+	for (i = idx; i >= 0; i--) {
+		if (maxval - row[i] <= thresh) {
+			left = i;
+		} else {
+			break;
+		}
+	}
+
+
+	for (i = idx + 1; i < len; i++) {
+		if (maxval - row[i] <= thresh) {
+			right = i;
+		} else {
+			break;
+		}
+	}
+
+	*left_out = left;
+	*right_out = right;
+}
+
+static int process_frame(struct camera_buffer *buf)
+{
+	uint32_t start = time_us_32();
+
+	if (buf->format != FORMAT_YUV422) {
+		return -1;
+	}
+
+	int x, y;
+	uint8_t maxval = 0;
+	int max_x = 0, max_y = 0;
+	// Find the brightest (Cr) pixel
+	for (y = 0; y < buf->height; y++) {
+		for (x = 0; x < buf->width / 2; x++) {
+			uint8_t pix = buf->data[2][buf->strides[2] * y + x];
+			if (pix > maxval) {
+				maxval = pix;
+				max_x = x;
+				max_y = y;
+			}
+		}
+	}
+
+	log_printf(&util_logger, "maxval: %d", maxval);
+
+	int l = max_x, r = max_x, a, b;
+	int idx = max_x;
+	for (y = max_y; y >= 0; y--) {
+		uint8_t *row = &buf->data[2][buf->strides[2] * y];
+		if (maxval - row[idx] < thresh) {
+			do_row(row, buf->width / 2, idx, maxval, &a, &b);
+			l = a < l ? a : l;
+			r = b > r ? b : r;
+		} else {
+			break;
+		}
+	}
+
+	idx = max_x;
+	for (y = max_y; y < buf->height; y++) {
+		uint8_t *row = &buf->data[2][buf->strides[2] * y];
+		if (maxval - row[idx] < thresh) {
+			do_row(row, buf->width / 2, idx, maxval, &a, &b);
+			l = a < l ? a : l;
+			r = b > r ? b : r;
+		} else {
+			break;
+		}
+	}
+
+	int mid = l + (r - l) / 2;
+
+	log_printf(&util_logger, "Process done. %d us, mid %d", time_us_32() - start, mid);
+	return mid;
+}
+
 void run_camera(void)
 {
 	log_printf(&util_logger, "run_camera()");
+	queue_init(&camera_queue, sizeof(struct camera_queue_item), 8);
 
-	// 125 MHz / 10 = 12.5 MHz
-	// Any higher doesn't work - either the shift register isn't fast enough
-	// or the PIO program isn't
-	clock_gpio_init(GPIO_XCLK, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 10);
+	// 125 MHz / 8 = 13.8 MHz
+	clock_gpio_init(GPIO_XCLK, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 9);
 
 	i2c_init(I2C_BUS, 100000);
 	gpio_set_function(I2C_PIN_SDA, GPIO_FUNC_I2C);
@@ -484,23 +796,89 @@ void run_camera(void)
 		return;
 	}
 
-	struct camera camera;
+	const uint16_t width = 80;
+	const uint16_t height = 60;
+	const uint32_t format = FORMAT_YUYV;
+
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
+	camera_configure(&camera, format, width, height);
 
-	camera_configure(&camera, FORMAT_YUYV, 80, 72);
+	host_buf = camera_buffer_alloc(FORMAT_YUV422, width, height);
+	assert(host_buf);
+	host_state = HOST_STATE_IDLE;
 
-	cam_buf = camera_buffer_alloc(FORMAT_YUYV, 80, 72);
-	assert(cam_buf);
+	int ret;
+	int pos;
+	struct camera_queue_item local_capture_qitem;
 
+	struct camera_buffer *local_buf = camera_buffer_alloc(FORMAT_YUV422, width, height);
+	local_capture_qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
+	local_capture_qitem.capture.buf = local_buf;
+	local_capture_qitem.capture.frame_cb = local_capture_cb;
+	//queue_add_blocking(&camera_queue, &qitem);
+
+	struct camera_queue_item qitem;
 	while (1) {
-		while (!go);
-		go = false;
+		queue_remove_blocking(&camera_queue, &qitem);
+		switch (qitem.type) {
+		case CAMERA_QUEUE_ITEM_CAPTURE:
+			//log_printf(&util_logger, "Start frame %p", qitem.capture.buf);
+			ret = camera_do_frame(&camera, qitem.capture.buf, qitem.capture.frame_cb, qitem.capture.cb_data);
+			if (ret < 0) {
+				log_printf(&util_logger, "Failed %d", ret);
+				// FIXME: How to better handle re-submit?
+				// Also, this could deadlock...
+				sleep_ms(15);
+				queue_add_blocking(&camera_queue, &qitem);
+			}
+			break;
+		case CAMERA_QUEUE_ITEM_HOST_ALLOC: {
+			char format[4];
+			memcpy(format, &qitem.host_alloc.format, 4);
 
-		log_printf(&util_logger, "Start frame");
-		camera_do_frame(&camera, cam_buf);
-		log_printf(&util_logger, "Waiting");
-		camera_wait_for_completion(&camera);
-		done = true;
-		log_printf(&util_logger, "Frame done");
+			host_buf = camera_buffer_alloc(qitem.host_alloc.format, width, height);
+			host_state = HOST_STATE_IDLE;
+			log_printf(&util_logger, "Alloc host buf %c%c%c%c, %p",
+					format[0], format[1], format[2], format[3], host_buf);
+			log_printf(&util_logger, "w, h: %d, %d",
+					host_buf->width, host_buf->height);
+			log_printf(&util_logger, "stride: %d, %d, %d",
+					host_buf->strides[0], host_buf->strides[1], host_buf->strides[2]);
+			log_printf(&util_logger, "size: %d, %d, %d",
+					host_buf->sizes[0], host_buf->sizes[1], host_buf->sizes[2]);
+			log_printf(&util_logger, "data: %d, %d, %d",
+					host_buf->data[0], host_buf->data[1], host_buf->data[2]);
+			break;
+			}
+		case CAMERA_QUEUE_ITEM_LOCAL_PROCESS: {
+			struct camera_buffer *buf = qitem.local_process.buf;
+			pos = process_frame(buf);
+			log_printf(&util_logger, "Middle: %d", pos);
+			break;
+			}
+		case CAMERA_QUEUE_ITEM_HOST_COMPLETE:
+			// TODO: Could deadlock
+			queue_add_blocking(&camera_queue, &local_capture_qitem);
+			break;
+		}
 	}
+}
+
+void OV7670_print(char *str)
+{
+	log_printf(&util_logger, str);
+}
+
+int OV7670_read_register(void *platform, uint8_t reg)
+{
+	uint8_t value;
+
+	ov7670_read(reg, &value);
+
+	return value;
+}
+
+void OV7670_write_register(void *platform, uint8_t reg, uint8_t value)
+{
+	ov7670_write(reg, value);
 }
