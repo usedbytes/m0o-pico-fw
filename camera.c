@@ -17,6 +17,7 @@
 #include "hardware/irq.h"
 #include "hardware/pio.h"
 
+#include "camera.h"
 #include "log.h"
 #include "util.h"
 //#include "ov7670_reg.h"
@@ -38,10 +39,6 @@
 #define CMD_SNAPGET (('S' << 0) | ('G' << 8) | ('E' << 16) | ('T' << 24))
 #define CMD_CAMERA  (('C' << 0) | ('A' << 8) | ('M' << 16) | ('C' << 24))
 
-#define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
-#define FORMAT_RGB565 (('R' << 0) | ('G' << 8) | ('1' << 16) | ('6' << 24))
-#define FORMAT_YUV422 (('Y' << 0) | ('U' << 8) | ('1' << 16) | ('6' << 24))
-
 static int ov7670_write(uint8_t addr, uint8_t value);
 static int ov7670_read(uint8_t addr, uint8_t *value);
 static int ov7670_init(void);
@@ -49,15 +46,6 @@ static int ov7670_init(void);
 static struct camera camera;
 
 static queue_t camera_queue;
-
-struct camera_buffer {
-	uint32_t format;
-	uint16_t width;
-	uint16_t height;
-	uint32_t strides[3];
-	uint32_t sizes[3];
-	uint8_t *data[3];
-};
 
 struct camera_config {
 	uint32_t format;
@@ -68,8 +56,6 @@ struct camera_config {
 	dma_channel_config dma_cfgs[3];
 	pio_sm_config sm_cfgs[4];
 };
-
-typedef void (*camera_frame_cb)(struct camera_buffer *buf, void *p);
 
 struct camera {
 	PIO pio;
@@ -83,34 +69,6 @@ struct camera {
 	volatile struct camera_buffer *pending;
 	volatile camera_frame_cb pending_cb;
 	volatile void *cb_data;
-};
-
-enum camera_queue_item_type {
-	CAMERA_QUEUE_ITEM_CAPTURE = 0,
-	CAMERA_QUEUE_ITEM_HOST_ALLOC,
-	CAMERA_QUEUE_ITEM_LOCAL_PROCESS,
-	CAMERA_QUEUE_ITEM_HOST_COMPLETE,
-};
-
-struct camera_queue_item {
-	uint8_t type;
-	uint8_t pad[3];
-	union {
-		struct {
-			struct camera_buffer *buf;
-			camera_frame_cb frame_cb;
-			void *cb_data;
-		} capture;
-		struct {
-			struct camera_buffer *buf;
-		} local_process;
-		struct {
-			uint32_t format;
-		} host_alloc;
-		struct {
-			uint32_t pad[3];
-		} body_pad;
-	};
 };
 
 #define CAMERA_HOST_CMD_TRIGGER     1
@@ -244,7 +202,7 @@ static const pio_program_t *format_get_pixel_loop(uint32_t format)
 	}
 }
 
-static void camera_buffer_free(struct camera_buffer *buf)
+void camera_buffer_free(struct camera_buffer *buf)
 {
 	if (buf == NULL) {
 		return;
@@ -259,7 +217,7 @@ static void camera_buffer_free(struct camera_buffer *buf)
 	free(buf);
 }
 
-static struct camera_buffer *camera_buffer_alloc(uint32_t format, uint16_t width, uint16_t height)
+struct camera_buffer *camera_buffer_alloc(uint32_t format, uint16_t width, uint16_t height)
 {
 	struct camera_buffer *buf = malloc(sizeof(*buf));
 	if (!buf) {
@@ -776,7 +734,12 @@ static int process_frame(struct camera_buffer *buf)
 	return mid;
 }
 
-void run_camera(void)
+void camera_queue_add_blocking(struct camera_queue_item *qitem)
+{
+	queue_add_blocking(&camera_queue, qitem);
+}
+
+void run_camera(queue_t *pos_queue)
 {
 	log_printf(&util_logger, "run_camera()");
 	queue_init(&camera_queue, sizeof(struct camera_queue_item), 8);
@@ -798,7 +761,7 @@ void run_camera(void)
 
 	const uint16_t width = 80;
 	const uint16_t height = 60;
-	const uint32_t format = FORMAT_YUYV;
+	const uint32_t format = FORMAT_YUV422;
 
 	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
 	camera_configure(&camera, format, width, height);
@@ -809,12 +772,13 @@ void run_camera(void)
 
 	int ret;
 	int pos;
-	struct camera_queue_item local_capture_qitem;
 
-	struct camera_buffer *local_buf = camera_buffer_alloc(FORMAT_YUV422, width, height);
-	local_capture_qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
-	local_capture_qitem.capture.buf = local_buf;
-	local_capture_qitem.capture.frame_cb = local_capture_cb;
+	//struct camera_queue_item local_capture_qitem;
+
+	//struct camera_buffer *local_buf = camera_buffer_alloc(FORMAT_YUV422, width, height);
+	//local_capture_qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
+	//local_capture_qitem.capture.buf = local_buf;
+	//local_capture_qitem.capture.frame_cb = local_capture_cb;
 	//queue_add_blocking(&camera_queue, &qitem);
 
 	struct camera_queue_item qitem;
@@ -853,12 +817,12 @@ void run_camera(void)
 		case CAMERA_QUEUE_ITEM_LOCAL_PROCESS: {
 			struct camera_buffer *buf = qitem.local_process.buf;
 			pos = process_frame(buf);
-			log_printf(&util_logger, "Middle: %d", pos);
+			queue_add_blocking(pos_queue, &pos);
 			break;
 			}
 		case CAMERA_QUEUE_ITEM_HOST_COMPLETE:
 			// TODO: Could deadlock
-			queue_add_blocking(&camera_queue, &local_capture_qitem);
+			//queue_add_blocking(&camera_queue, &local_capture_qitem);
 			break;
 		}
 	}

@@ -11,6 +11,7 @@
 #include "hardware/i2c.h"
 
 #include "bno055.h"
+#include "camera.h"
 #include "chassis.h"
 #include "comm.h"
 #include "log.h"
@@ -126,11 +127,10 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 	return COMM_RSP_OK;
 }
 
-extern void run_camera(void);
-
+queue_t pos_queue;
 static void core1_main(void)
 {
-	run_camera();
+	run_camera(&pos_queue);
 
 	// Should hopefully never reach here.
 	while (1) {
@@ -170,6 +170,8 @@ static int reinit_vl53l0x(struct vl53l0x_dev *sens)
 	return 0;
 }
 
+extern void local_capture_cb(struct camera_buffer *buf, void *data);
+
 int main()
 {
 	gpio_init(PICO_DEFAULT_LED_PIN);
@@ -181,10 +183,39 @@ int main()
 
 	chassis_init(&chassis, MOTOR_PIN_L_A, MOTOR_PIN_R_A);
 
-	//run_camera();
+	queue_init(&pos_queue, sizeof(int), 2);
 
-	//multicore_launch_core1(core1_main);
+	multicore_launch_core1(core1_main);
 
+	struct camera_buffer *buf = camera_buffer_alloc(FORMAT_YUV422, 80, 60);
+	struct camera_queue_item local_capture_qitem;
+	local_capture_qitem.type = CAMERA_QUEUE_ITEM_CAPTURE;
+	local_capture_qitem.capture.buf = buf;
+	local_capture_qitem.capture.frame_cb = local_capture_cb;
+
+	int pos;
+
+	while (1) {
+		if (!heading_mode) {
+			sleep_ms(300);
+			continue;
+		}
+
+		// Request a camera frame
+		camera_queue_add_blocking(&local_capture_qitem);
+
+		// Wait for the result
+		queue_remove_blocking(&pos_queue, &pos);
+
+		// Update motors
+		int diff = 20 - pos;
+		log_printf(&util_logger, "Middle: %d, diff: %d", pos, diff);
+		chassis_set(&chassis, 0, diff * 3);
+		sleep_ms(10);
+	}
+
+	/*
+	TODO: Conflict on i2c bus
 	i2c_init(i2c0, 100 * 1000);
 	gpio_set_function(0, GPIO_FUNC_I2C);
 	gpio_set_function(1, GPIO_FUNC_I2C);
@@ -265,4 +296,5 @@ int main()
 
 		chassis_set(&chassis, 0, -omega);
 	}
+	*/
 }
