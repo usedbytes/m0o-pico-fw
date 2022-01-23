@@ -32,7 +32,7 @@
 #define CAMERA_PIO           pio0
 #define CAMERA_PIO_FRAME_SM  0
 #define CAMERA_DMA_CHAN_BASE 0
-#define CAMERA_MAX_N_PLANES  1
+#define CAMERA_MAX_N_PLANES  3
 
 #define CMD_SNAP    (('S' << 0) | ('N' << 8) | ('A' << 16) | ('P' << 24))
 #define CMD_SNAPGET (('S' << 0) | ('G' << 8) | ('E' << 16) | ('T' << 24))
@@ -40,6 +40,7 @@
 
 #define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
 #define FORMAT_RGB565 (('R' << 0) | ('G' << 8) | ('1' << 16) | ('6' << 24))
+#define FORMAT_YUV422 (('Y' << 0) | ('U' << 8) | ('1' << 16) | ('6' << 24))
 
 static int ov7670_write(uint8_t addr, uint8_t value);
 static int ov7670_read(uint8_t addr, uint8_t *value);
@@ -63,6 +64,7 @@ struct camera_config {
 	uint16_t width;
 	uint16_t height;
 	uint dma_transfers[3];
+	uint dma_offset[3];
 	dma_channel_config dma_cfgs[3];
 	pio_sm_config sm_cfgs[4];
 };
@@ -138,6 +140,8 @@ static uint8_t format_num_planes(uint32_t format)
 		/* Fallthrough */
 	case FORMAT_RGB565:
 		return 1;
+	case FORMAT_YUV422:
+		return 3;
 	default:
 		return 0;
 	}
@@ -150,6 +154,8 @@ static uint8_t format_bytes_per_pixel(uint32_t format, uint8_t plane)
 		/* Fallthrough */
 	case FORMAT_RGB565:
 		return 2;
+	case FORMAT_YUV422:
+		return 1;
 	default:
 		return 0;
 	}
@@ -161,6 +167,8 @@ static uint8_t format_pixels_per_chunk(uint32_t format)
 	case FORMAT_YUYV:
 		/* Fallthrough */
 	case FORMAT_RGB565:
+		return 2;
+	case FORMAT_YUV422:
 		return 2;
 	default:
 		return 1;
@@ -174,6 +182,8 @@ static enum dma_channel_transfer_size format_transfer_size(uint32_t format, uint
 		/* Fallthrough */
 	case FORMAT_RGB565:
 		return DMA_SIZE_32;
+	case FORMAT_YUV422:
+		return plane ? DMA_SIZE_8 : DMA_SIZE_16;
 	default:
 		return 0;
 	}
@@ -200,6 +210,8 @@ static uint8_t format_hsub(uint32_t format, uint8_t plane)
 		/* Fallthrough */
 	case FORMAT_RGB565:
 		return 1;
+	case FORMAT_YUV422:
+		return plane ? 2 : 1;
 	default:
 		return 0;
 	}
@@ -213,6 +225,22 @@ static uint32_t format_stride(uint32_t format, uint8_t plane, uint16_t width)
 static uint32_t format_plane_size(uint32_t format, uint8_t plane, uint16_t width, uint16_t height)
 {
 	return format_stride(format, plane, width) * height;
+}
+
+static const pio_program_t *format_get_pixel_loop(uint32_t format)
+{
+	switch (format) {
+	case FORMAT_YUYV:
+		return &pixel_loop_yuyv_program;
+	case FORMAT_RGB565:
+		// XXX: Should really use a 16-bit loop and swap to 2 bytes
+		// per chunk instead of 4.
+		return &pixel_loop_yuyv_program;
+	case FORMAT_YUV422:
+		return &pixel_loop_yu16_program;
+	default:
+		return NULL;
+	}
 }
 
 static void camera_buffer_free(struct camera_buffer *buf)
@@ -288,7 +316,9 @@ static void camera_pio_configure(struct camera *camera)
 		pio_sm_clear_fifos(camera->pio, i);
 	}
 
-	// TODO: Patch the pixel loop
+	// Patch the pixel loop
+	const pio_program_t *pixel_loop = format_get_pixel_loop(camera->config.format);
+	camera_pio_patch_pixel_loop(camera->pio, camera->frame_offset, pixel_loop);
 
 	// Finally we can configure and enable the state machines
 	uint8_t num_planes = format_num_planes(camera->config.format);
@@ -307,6 +337,8 @@ static OV7670_colorspace format_to_colorspace(uint32_t format)
 	case FORMAT_RGB565:
 		return OV7670_COLOR_RGB;
 	case FORMAT_YUYV:
+		/* Fallthrough */
+	case FORMAT_YUV422:
 		return OV7670_COLOR_YUV;
 	}
 
@@ -338,11 +370,14 @@ static void camera_configure(struct camera *camera, uint32_t format, uint16_t wi
 		camera->config.dma_cfgs[i] = c;
 
 		uint8_t xfer_bytes = __dma_transfer_size_to_bytes(xfer_size);
+		camera->config.dma_offset[i] = 4 - xfer_bytes,
 		camera->config.dma_transfers[i] = format_plane_size(format, i, width, height) / xfer_bytes,
 
 		camera->config.sm_cfgs[i + 1] = camera_pio_get_shift_byte_sm_config(camera->pio, i + 1,
 							camera->shift_byte_offset, PIN_D0,
 							xfer_bytes * 8);
+		log_printf(&util_logger, "dma_cfg %d, xfer_size %d %d bytes, transfers: %d, offset: %d",
+				i, xfer_size, xfer_bytes, camera->config.dma_transfers[i], camera->config.dma_offset[i]);
 	}
 
 	camera_pio_configure(camera);
@@ -403,7 +438,7 @@ static int camera_do_frame(struct camera *camera, struct camera_buffer *buf, cam
 		dma_channel_configure(camera->dma_channels[i],
 				&camera->config.dma_cfgs[i],
 				buf->data[i],
-				&camera->pio->rxf[i + 1],
+				((char *)&camera->pio->rxf[i + 1]) + camera->config.dma_offset[i],
 				camera->config.dma_transfers[i],
 				true);
 	}
@@ -436,7 +471,7 @@ struct camera_buffer *host_buf;
 
 void host_capture_cb(struct camera_buffer *buf, void *data)
 {
-	//log_printf(&util_logger, "Host frame done");
+	log_printf(&util_logger, "Host frame done");
 	host_state = HOST_STATE_COMPLETE;
 }
 
@@ -468,10 +503,19 @@ static uint32_t handle_camera_cmd(uint32_t *args_in, uint8_t *data_in, uint32_t 
 		host_buf = NULL;
 
 		qitem.type = CAMERA_QUEUE_ITEM_HOST_ALLOC;
-		if (cmd_in->format.format_idx == 0) {
+		switch (cmd_in->format.format_idx) {
+		case 0:
 			qitem.host_alloc.format = FORMAT_YUYV;
-		} else {
+			break;
+		case 1:
 			qitem.host_alloc.format = FORMAT_RGB565;
+			break;
+		case 2:
+			qitem.host_alloc.format = FORMAT_YUV422;
+			break;
+		default:
+			qitem.host_alloc.format = FORMAT_RGB565;
+			break;
 		}
 		queue_try_add(&camera_queue, &qitem);
 		break;
@@ -758,6 +802,14 @@ void run_camera(void)
 			host_state = HOST_STATE_IDLE;
 			log_printf(&util_logger, "Alloc host buf %c%c%c%c, %p",
 					format[0], format[1], format[2], format[3], host_buf);
+			log_printf(&util_logger, "w, h: %d, %d",
+					host_buf->width, host_buf->height);
+			log_printf(&util_logger, "stride: %d, %d, %d",
+					host_buf->strides[0], host_buf->strides[1], host_buf->strides[2]);
+			log_printf(&util_logger, "size: %d, %d, %d",
+					host_buf->sizes[0], host_buf->sizes[1], host_buf->sizes[2]);
+			log_printf(&util_logger, "data: %d, %d, %d",
+					host_buf->data[0], host_buf->data[1], host_buf->data[2]);
 			break;
 			}
 		case CAMERA_QUEUE_ITEM_LOCAL_PROCESS: {
