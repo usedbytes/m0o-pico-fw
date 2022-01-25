@@ -648,26 +648,30 @@ void local_capture_cb(struct camera_buffer *buf, void *data)
 	queue_add_blocking(&camera_queue, &qitem);
 }
 
-const uint8_t thresh = 10;
+const uint8_t threshold = 10;
 
-static void do_row(uint8_t *row, int len, int idx, uint8_t maxval, int *left_out, int *right_out)
+// Search for the furthest left and furthest right pixels in 'row'
+// which are brighter than 'maxval - threshold', starting at 'start_idx'
+static void search_row(uint8_t *row, int len, int start_idx, uint8_t maxval,
+		       int *left_out, int *right_out)
 {
 	int i;
 
-	int left = idx;
-	int right = idx;
+	int left = start_idx;
+	int right = start_idx;
 
-	for (i = idx; i >= 0; i--) {
-		if (maxval - row[i] <= thresh) {
+	// Search to the left
+	for (i = start_idx; i >= 0; i--) {
+		if (maxval - row[i] <= threshold) {
 			left = i;
 		} else {
 			break;
 		}
 	}
 
-
-	for (i = idx + 1; i < len; i++) {
-		if (maxval - row[i] <= thresh) {
+	// Search to the right
+	for (i = start_idx + 1; i < len; i++) {
+		if (maxval - row[i] <= threshold) {
 			right = i;
 		} else {
 			break;
@@ -678,59 +682,85 @@ static void do_row(uint8_t *row, int len, int idx, uint8_t maxval, int *left_out
 	*right_out = right;
 }
 
-static int process_frame(struct camera_buffer *buf)
+// Returns the middle 'X' coordinate of the brightest red blob
+static int find_red_blob(struct camera_buffer *buf)
 {
 	uint32_t start = time_us_32();
-
-	if (buf->format != FORMAT_YUV422) {
-		return -1;
-	}
-
 	int x, y;
-	uint8_t maxval = 0;
+	uint8_t reddest = 0;
 	int max_x = 0, max_y = 0;
-	// Find the brightest (Cr) pixel
+
+	// First find the reddest pixel in the image.
+	// It's a YCbCr image, we only care about "redness", which is Cr
+	// which is stored in buf->data[2]
 	for (y = 0; y < buf->height; y++) {
 		for (x = 0; x < buf->width / 2; x++) {
 			uint8_t pix = buf->data[2][buf->strides[2] * y + x];
-			if (pix > maxval) {
-				maxval = pix;
+			if (pix > reddest) {
+				reddest = pix;
 				max_x = x;
 				max_y = y;
 			}
 		}
 	}
 
-	log_printf(&util_logger, "maxval: %d", maxval);
+	log_printf(&util_logger, "reddest: %d", reddest);
 
-	int l = max_x, r = max_x, a, b;
+	// Next, we search up and down the rows, looking for ones which are also
+	// part of the blob.
+	// On each row, we find the leftmost and rightmost pixel which is within
+	// some threshold of the reddest value.
+	// Then we take the middle of that left..right range to use as the
+	// starting point for searching the next row.
+
+	// l and r track the absolute leftmost and rightmost extremes of the
+	// blob, eventually giving its widest point.
+	int l = max_x;
+	int r = max_x;
+	int tmp_l, tmp_r;
+
+	// Search up
 	int idx = max_x;
 	for (y = max_y; y >= 0; y--) {
 		uint8_t *row = &buf->data[2][buf->strides[2] * y];
-		if (maxval - row[idx] < thresh) {
-			do_row(row, buf->width / 2, idx, maxval, &a, &b);
-			l = a < l ? a : l;
-			r = b > r ? b : r;
+
+		// Only search this row if the starting point is actually
+		// red enough
+		if (reddest - row[idx] < threshold) {
+			// Note: buf->width / 2, because this is a YUV422 image,
+			// so the Cr plane is half as wide as the image itself
+			search_row(row, buf->width / 2, idx, reddest, &tmp_l, &tmp_r);
+
+			// Update the global leftmost/rightmost values
+			l = tmp_l < l ? tmp_l : l;
+			r = tmp_r > r ? tmp_r : r;
+
+			// Calculate the starting point for the next row
+			idx = tmp_l + ((tmp_r - tmp_l) / 2);
 		} else {
 			break;
 		}
 	}
 
-	idx = max_x;
+	// Search down, starting with the middle X coord we've found so far
+	idx = l + ((r - l) / 2);
 	for (y = max_y; y < buf->height; y++) {
 		uint8_t *row = &buf->data[2][buf->strides[2] * y];
-		if (maxval - row[idx] < thresh) {
-			do_row(row, buf->width / 2, idx, maxval, &a, &b);
-			l = a < l ? a : l;
-			r = b > r ? b : r;
+		if (reddest - row[idx] < threshold) {
+			search_row(row, buf->width / 2, idx, reddest, &tmp_l, &tmp_r);
+
+			l = tmp_l < l ? tmp_l : l;
+			r = tmp_r > r ? tmp_r : r;
 		} else {
 			break;
 		}
 	}
 
+	// Finally, calculate the overall middle X coord
 	int mid = l + (r - l) / 2;
 
 	log_printf(&util_logger, "Process done. %d us, mid %d", time_us_32() - start, mid);
+
 	return mid;
 }
 
@@ -816,7 +846,7 @@ void run_camera(queue_t *pos_queue)
 			}
 		case CAMERA_QUEUE_ITEM_LOCAL_PROCESS: {
 			struct camera_buffer *buf = qitem.local_process.buf;
-			pos = process_frame(buf);
+			pos = find_red_blob(buf);
 			queue_add_blocking(pos_queue, &pos);
 			break;
 			}
