@@ -10,6 +10,8 @@
 
 #include "pico/util/queue.h"
 
+#include "i2c_bus.h"
+
 #define FORMAT_YUYV (('Y' << 0) | ('U' << 8) | ('Y' << 16) | ('V' << 24))
 #define FORMAT_RGB565 (('R' << 0) | ('G' << 8) | ('1' << 16) | ('6' << 24))
 #define FORMAT_YUV422 (('Y' << 0) | ('U' << 8) | ('1' << 16) | ('6' << 24))
@@ -57,6 +59,6 @@ struct camera_buffer *camera_buffer_alloc(uint32_t format, uint16_t width, uint1
 void camera_buffer_free(struct camera_buffer *buf);
 
 void camera_queue_add_blocking(struct camera_queue_item *qitem);
-void run_camera(queue_t *pos_queue);
+void run_camera(queue_t *pos_queue, struct i2c_bus *i2c);
 
 #endif /* __CAMERA_H__ */

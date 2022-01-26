@@ -27,6 +27,10 @@
 
 #define BNO055_ADDR 0x28
 
+#define I2C_BUS      i2c0
+#define I2C_PIN_SDA  0
+#define I2C_PIN_SCL  1
+
 #define BTN_BIT_A       0
 #define BTN_BIT_B       1
 #define BTN_BIT_X       2
@@ -127,10 +131,11 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 	return COMM_RSP_OK;
 }
 
+struct i2c_bus i2c;
 queue_t pos_queue;
 static void core1_main(void)
 {
-	run_camera(&pos_queue);
+	run_camera(&pos_queue, &i2c);
 
 	// Should hopefully never reach here.
 	while (1) {
@@ -180,6 +185,12 @@ int main()
 	util_init();
 
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
+
+	i2c_bus_init(&i2c, I2C_BUS, 100000);
+	gpio_set_function(I2C_PIN_SDA, GPIO_FUNC_I2C);
+	gpio_set_function(I2C_PIN_SCL, GPIO_FUNC_I2C);
+	gpio_pull_up(I2C_PIN_SDA);
+	gpio_pull_up(I2C_PIN_SCL);
 
 	chassis_init(&chassis, MOTOR_PIN_L_A, MOTOR_PIN_R_A);
 

@@ -13,7 +13,6 @@
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
-#include "hardware/i2c.h"
 #include "hardware/irq.h"
 #include "hardware/pio.h"
 
@@ -25,9 +24,6 @@
 
 #include "camera.pio.h"
 
-#define I2C_BUS      i2c0
-#define I2C_PIN_SDA  0
-#define I2C_PIN_SCL  1
 #define PIN_D0       16
 
 #define CAMERA_PIO           pio0
@@ -38,10 +34,6 @@
 #define CMD_SNAP    (('S' << 0) | ('N' << 8) | ('A' << 16) | ('P' << 24))
 #define CMD_SNAPGET (('S' << 0) | ('G' << 8) | ('E' << 16) | ('T' << 24))
 #define CMD_CAMERA  (('C' << 0) | ('A' << 8) | ('M' << 16) | ('C' << 24))
-
-static int ov7670_write(uint8_t addr, uint8_t value);
-static int ov7670_read(uint8_t addr, uint8_t *value);
-static int ov7670_init(void);
 
 static struct camera camera;
 
@@ -59,6 +51,7 @@ struct camera_config {
 
 struct camera {
 	PIO pio;
+	struct i2c_bus *i2c;
 	OV7670_host host;
 	uint frame_offset;
 	uint shift_byte_offset;
@@ -356,10 +349,11 @@ static void camera_isr_pio0(void)
 	camera.pending = NULL;
 }
 
-static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan)
+static void camera_init(struct camera *camera, PIO pio, uint base_dma_chan, struct i2c_bus *i2c)
 {
 	*camera = (struct camera){ 0 };
 
+	camera->i2c = i2c;
 	camera->host = (OV7670_host){
 		.pins = &(OV7670_pins){
 			.enable = -1,
@@ -529,94 +523,15 @@ static uint32_t handle_snapget(uint32_t *args_in, uint8_t *data_in, uint32_t *re
 	return COMM_RSP_OK;
 }
 
-static int ov7670_write(uint8_t addr, uint8_t value) {
-	int ret;
-	static uint8_t data[2];
-
-	data[0] = addr;
-	data[1] = value;
-	ret = i2c_write_blocking(I2C_BUS, OV7670_ADDR, data, 2, false);
-	if (ret != 2) {
-		log_printf(&util_logger, "ov7670_write 0x%02x %d: %d", addr, value, ret);
-		return -1;
-	}
-
-	return 0;
-}
-
-static int ov7670_read(uint8_t addr, uint8_t *value) {
-	int ret = i2c_write_blocking(I2C_BUS, OV7670_ADDR, &addr, 1, false);
-	if (ret != 1) {
-		log_printf(&util_logger, "ov7670_read W 0x%02x 1: %d", addr, ret);
-		return -1;
-	}
-
-	ret = i2c_read_blocking(I2C_BUS, OV7670_ADDR, value, 1, false);
-	if (ret != 1) {
-		log_printf(&util_logger, "ov7670_read R 0x%02x 1: %d", addr, ret);
-		return -2;
-	}
-
-	return 0;
-}
-
-static int ov7670_init(void) {
-#if 0
-	int ret;
-
-	// Bring clock down to ~1MHz
-	ret = ov7670_write(OV7670_REG_CLKRC, CLKRC_SET_SCALE(1));
-	if (ret) {
-		return ret;
-	}
-
-	// Output QCIF YUV422
-	ret = ov7670_write(OV7670_REG_COM7, COM7_SIZE_QCIF /*| (1 << 1)*/);
-	if (ret) {
-		return ret;
-	}
-
-	/* Enable scaling and downsample/crop/window */
-	ov7670_write(OV7670_REG_COM3, 0x0C);
-	/* Stop PCLK during Hblank */
-	ov7670_write(OV7670_REG_COM10, (1 << 5));
-
-	/*
-	// Preset QCIF from OV7670 IM
-	ov7670_write(OV7670_REG_CLKRC,  0x02); // Note: 0x01 in the IM
-	ov7670_write(OV7670_REG_COM7,   0x00);
-	ov7670_write(OV7670_REG_COM3,   0x0C);
-	ov7670_write(OV7670_REG_COM14,  0x11);
-	ov7670_write(OV7670_REG_XSCALE, 0x3A);
-	ov7670_write(OV7670_REG_YSCALE, 0x35);
-	ov7670_write(OV7670_REG_SCDCW,  0x11);
-	ov7670_write(OV7670_REG_SCPCLK, 0xF1);
-	ov7670_write(OV7670_REG_SCPDLY, 0x52);
-	*/
-	// Preset QQCIF
-	ov7670_write(OV7670_REG_CLKRC,  0x01);
-	ov7670_write(OV7670_REG_COM7,   0x00);
-	ov7670_write(OV7670_REG_COM3,   0x0C);
-	ov7670_write(OV7670_REG_COM14,  0x12);
-	ov7670_write(OV7670_REG_XSCALE, 0x3A);
-	ov7670_write(OV7670_REG_YSCALE, 0x35);
-	ov7670_write(OV7670_REG_SCDCW,  0x22);
-	ov7670_write(OV7670_REG_SCPCLK, 0xF2);
-	ov7670_write(OV7670_REG_SCPDLY, 0x2A);
-
-#endif
-	return 0;
-}
-
-static bool ov7670_detect(void)
+static bool ov7670_detect(struct i2c_bus *i2c)
 {
 	uint8_t val = 0;
 
 	int tries = 5;
 	while (tries--) {
-		int ret = ov7670_read(OV7670_REG_PID, &val);
+		int ret = i2c_bus_read(i2c, OV7670_ADDR, OV7670_REG_PID, &val, 1);
 		if (ret) {
-			log_printf(&util_logger, "%d: Error reading PID: %d", tries, ret);
+			log_printf(&util_logger, "ov7670_detect R: %d", ret);
 			continue;
 		}
 
@@ -625,6 +540,8 @@ static bool ov7670_detect(void)
 		}
 
 		log_printf(&util_logger, "%d: Unexpected PID: 0x%02x", tries, val);
+
+		sleep_ms(10);
 	}
 
 	if (tries <= 0) {
@@ -769,7 +686,7 @@ void camera_queue_add_blocking(struct camera_queue_item *qitem)
 	queue_add_blocking(&camera_queue, qitem);
 }
 
-void run_camera(queue_t *pos_queue)
+void run_camera(queue_t *pos_queue, struct i2c_bus *i2c)
 {
 	log_printf(&util_logger, "run_camera()");
 	queue_init(&camera_queue, sizeof(struct camera_queue_item), 8);
@@ -777,15 +694,9 @@ void run_camera(queue_t *pos_queue)
 	// 125 MHz / 8 = 13.8 MHz
 	clock_gpio_init(GPIO_XCLK, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_SYS, 9);
 
-	i2c_init(I2C_BUS, 100000);
-	gpio_set_function(I2C_PIN_SDA, GPIO_FUNC_I2C);
-	gpio_set_function(I2C_PIN_SCL, GPIO_FUNC_I2C);
-	gpio_pull_up(I2C_PIN_SDA);
-	gpio_pull_up(I2C_PIN_SCL);
+	sleep_ms(100);
 
-	sleep_ms(1000);
-
-	if (!ov7670_detect()) {
+	if (!ov7670_detect(i2c)) {
 		return;
 	}
 
@@ -793,7 +704,7 @@ void run_camera(queue_t *pos_queue)
 	const uint16_t height = 60;
 	const uint32_t format = FORMAT_YUV422;
 
-	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE);
+	camera_init(&camera, CAMERA_PIO, CAMERA_DMA_CHAN_BASE, i2c);
 	camera_configure(&camera, format, width, height);
 
 	host_buf = camera_buffer_alloc(FORMAT_YUV422, width, height);
@@ -865,14 +776,17 @@ void OV7670_print(char *str)
 
 int OV7670_read_register(void *platform, uint8_t reg)
 {
+	struct camera *cam = (struct camera *)platform;
 	uint8_t value;
 
-	ov7670_read(reg, &value);
+	i2c_bus_read(cam->i2c, OV7670_ADDR, reg, &value, 1);
 
 	return value;
 }
 
 void OV7670_write_register(void *platform, uint8_t reg, uint8_t value)
 {
-	ov7670_write(reg, value);
+	struct camera *cam = (struct camera *)platform;
+
+	i2c_bus_write(cam->i2c, OV7670_ADDR, (uint8_t[]){ reg, value }, 2);
 }
