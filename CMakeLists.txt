@@ -16,6 +16,7 @@ add_executable(rebound
 	camera.c
 	chassis.c
 	comm.c
+	i2c_bus.c
 	log.c
 	main.c
 	ov7670.c
