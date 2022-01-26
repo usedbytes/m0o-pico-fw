@@ -93,11 +93,11 @@ int vl53l0x_init(struct vl53l0x_dev *dev)
 		return ret;
 	}
 
-	ret = i2c_read_blocking(dev->i2c, dev->addr_7b, &vhv, 1, false);
-	if (ret != 1) {
+	ret = i2c_bus_read_raw(dev->i2c, dev->addr_7b, &vhv, 1);
+	if (ret) {
 		log_printf(&util_logger, "vl53l0x_init initial read: %d",ret);
 		return ret;
-	} else if ((ret == 1) && dev->addr_7b != VL53L0X_DEFAULT_ADDR) {
+	} else if (dev->addr_7b != VL53L0X_DEFAULT_ADDR) {
 		dev->addr_set = false;
 		ret = vl53l0x_set_addr(dev, dev->addr_7b);
 		if (ret) {
@@ -146,7 +146,7 @@ int vl53l0x_set_addr(struct vl53l0x_dev *dev, uint8_t new_addr_7b)
 
 	log_printf(&util_logger, "Setting addr: %x", new_addr_7b);
 
-	ret = i2c_write_blocking(dev->i2c, old_addr, (uint8_t[]){ VL53L0X_REG_I2C_SLAVE_DEVICE_ADDRESS, new_addr_7b }, 2, false);
+	ret = i2c_bus_write(dev->i2c, old_addr, (uint8_t []){ VL53L0X_REG_I2C_SLAVE_DEVICE_ADDRESS, new_addr_7b }, 2);
 	if (ret) {
 		vl53l0x_platform_errno = ret;
 		log_printf(&util_logger, "SetAddress: %x",(uint32_t)ret);
@@ -393,9 +393,8 @@ VL53L0X_Error VL53L0X_WriteMulti(VL53L0X_DEV Dev, uint8_t index, uint8_t *pdata,
 	i2c_buf[0] = index;
 	memcpy(i2c_buf + 1, pdata, count);
 
-	int ret = i2c_write_blocking(dev->i2c, dev->addr_7b, i2c_buf, count + 1, false);
-	if (ret != count + 1) {
-		log_printf(&util_logger, "vl53l0x write_multi %d: %d", index, ret);
+	int ret = i2c_bus_write(dev->i2c, dev->addr_7b, i2c_buf, count + 1);
+	if (ret) {
 		vl53l0x_platform_errno = ret;
 		return VL53L0X_ERROR_CONTROL_INTERFACE;
 	}
@@ -407,16 +406,8 @@ VL53L0X_Error VL53L0X_ReadMulti(VL53L0X_DEV Dev, uint8_t index, uint8_t *pdata, 
 {
 	struct vl53l0x_dev *dev = to_dev(Dev);
 
-	int ret = i2c_write_blocking(dev->i2c, dev->addr_7b, &index, 1, false);
-	if (ret != 1) {
-		log_printf(&util_logger, "vl53l0x read_multi W %d: %d", index, ret);
-		vl53l0x_platform_errno = ret;
-		return VL53L0X_ERROR_CONTROL_INTERFACE;
-	}
-
-	ret = i2c_read_blocking(dev->i2c, dev->addr_7b, pdata, count, false);
-	if (ret != count) {
-		log_printf(&util_logger, "vl53l0x read_multi R %d: %d", index, ret);
+	int ret = i2c_bus_read(dev->i2c, dev->addr_7b, index, pdata, count);
+	if (ret) {
 		vl53l0x_platform_errno = ret;
 		return VL53L0X_ERROR_CONTROL_INTERFACE;
 	}
@@ -428,9 +419,8 @@ VL53L0X_Error VL53L0X_WrByte(VL53L0X_DEV Dev, uint8_t index, uint8_t data)
 {
 	struct vl53l0x_dev *dev = to_dev(Dev);
 
-	int ret = i2c_write_blocking(dev->i2c, dev->addr_7b, (uint8_t[]) { index, data }, 2, false);
-	if (ret != 2) {
-		log_printf(&util_logger, "vl53l0x wr_byte %d: %d", index, ret);
+	int ret = i2c_bus_write(dev->i2c, dev->addr_7b, (uint8_t[]){ index, data }, 2);
+	if (ret) {
 		vl53l0x_platform_errno = ret;
 		return VL53L0X_ERROR_CONTROL_INTERFACE;
 	}

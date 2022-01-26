@@ -14,6 +14,23 @@ void i2c_bus_init(struct i2c_bus *bus, i2c_inst_t *i2c, uint baudrate)
 	i2c_init(bus->i2c, baudrate);
 }
 
+int i2c_bus_read_raw(struct i2c_bus *bus, uint8_t dev_addr, uint8_t *data, size_t len)
+{
+	mutex_enter_blocking(&bus->lock);
+
+	int ret = i2c_read_blocking(bus->i2c, dev_addr, data, len, false);
+	if (ret != len) {
+		log_printf(&util_logger, "i2c_bus_read_raw R %d: %d", len, ret);
+		ret = -2;
+		goto done;
+	}
+
+	ret = 0;
+done:
+	mutex_exit(&bus->lock);
+	return ret;
+}
+
 int i2c_bus_read(struct i2c_bus *bus, uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t len)
 {
 	int ret;

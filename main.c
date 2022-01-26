@@ -194,6 +194,27 @@ int main()
 
 	chassis_init(&chassis, MOTOR_PIN_L_A, MOTOR_PIN_R_A);
 
+	struct vl53l0x_dev sens = {
+		.i2c = &i2c,
+		.addr_7b = 0x29,
+	};
+
+	bool inited = false;
+	int ret = reinit_vl53l0x(&sens);
+	if (!ret) {
+		inited = true;
+	}
+
+	VL53L0X_RangingMeasurementData_t data;
+	if (inited) {
+		log_printf(&util_logger, "Do measure...");
+		ret = vl53l0x_do_single_measurement(&sens, &data);
+		log_printf(&util_logger, "Done: %d %d mm", ret, data.RangeMilliMeter);
+		if (ret) {
+			inited = false;
+		}
+	}
+
 	queue_init(&pos_queue, sizeof(int), 2);
 
 	multicore_launch_core1(core1_main);
@@ -208,6 +229,23 @@ int main()
 
 	while (1) {
 		if (!heading_mode) {
+			if (inited) {
+				log_printf(&util_logger, "Do measure...");
+				ret = vl53l0x_do_single_measurement(&sens, &data);
+				char status_str[128];
+				VL53L0X_GetRangeStatusString(data.RangeStatus, status_str);
+				log_printf(&util_logger, "Done: %d %d mm, timestamp %d us, status %s", ret, data.RangeMilliMeter,
+						data.TimeStamp, status_str);
+				if (ret != 0) {
+					inited = false;
+				}
+			} else {
+				ret = reinit_vl53l0x(&sens);
+				if (ret) {
+					inited = false;
+				}
+			}
+
 			sleep_ms(300);
 			continue;
 		}
@@ -244,7 +282,7 @@ int main()
 	int i = 0;
 
 	struct vl53l0x_dev sens = {
-		.i2c = i2c0,
+		.i2c = i2c,
 		.addr_7b = 0x29,
 	};
 

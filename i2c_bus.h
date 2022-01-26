@@ -23,6 +23,7 @@ struct i2c_bus {
 void i2c_bus_init(struct i2c_bus *bus, i2c_inst_t *i2c, uint baudrate);
 
 int i2c_bus_read(struct i2c_bus *bus, uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, size_t len);
+int i2c_bus_read_raw(struct i2c_bus *bus, uint8_t dev_addr, uint8_t *data, size_t len);
 int i2c_bus_write(struct i2c_bus *bus, uint8_t dev_addr, uint8_t *data, size_t len);
 int i2c_bus_write_byte(struct i2c_bus *bus, uint8_t dev_addr, uint8_t data);
 

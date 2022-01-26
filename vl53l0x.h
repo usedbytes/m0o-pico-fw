@@ -19,14 +19,14 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "hardware/i2c.h"
-
 #include "vl53l0x/core/inc/vl53l0x_def.h"
 #include "vl53l0x/platform/inc/vl53l0x_platform.h"
 
+#include "i2c_bus.h"
+
 struct vl53l0x_dev {
 	struct VL53L0X_Dev pal_dev;
-	i2c_inst_t *i2c;
+	struct i2c_bus *i2c;
 	uint8_t addr_7b;
 
 	uint8_t xshut_port;
