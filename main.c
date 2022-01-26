@@ -233,6 +233,7 @@ int main()
 
 	while (1) {
 		if (!heading_mode) {
+			/*
 			if (inited) {
 				log_printf(&util_logger, "Do measure...");
 				ret = vl53l0x_do_single_measurement(&sens, &data);
@@ -260,6 +261,7 @@ int main()
 			} else {
 				log_printf(&util_logger, "Heading: %3.2f", (float)current_heading / 16.0);
 			}
+			*/
 
 			sleep_ms(300);
 			continue;
