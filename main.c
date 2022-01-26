@@ -215,6 +215,10 @@ int main()
 		}
 	}
 
+	struct bno055 bno055;
+	ret = bno055_init(&bno055, &i2c, BNO055_ADDR);
+	log_printf(&util_logger, "bno055 init: %d", ret);
+
 	queue_init(&pos_queue, sizeof(int), 2);
 
 	multicore_launch_core1(core1_main);
@@ -244,6 +248,17 @@ int main()
 				if (ret) {
 					inited = false;
 				}
+			}
+
+			int16_t current_heading;
+			int ret = bno055_get_heading(&bno055, &current_heading);
+			if (ret != 0) {
+				log_printf(&util_logger, "bno055 error: %d", ret);
+				ret = bno055_init(&bno055, &i2c, BNO055_ADDR);
+				log_printf(&util_logger, "re-init: %d", ret);
+				continue;
+			} else {
+				log_printf(&util_logger, "Heading: %3.2f", (float)current_heading / 16.0);
 			}
 
 			sleep_ms(300);

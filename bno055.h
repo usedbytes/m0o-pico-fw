@@ -29,7 +29,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "hardware/i2c.h"
+#include "i2c_bus.h"
 
 #define BNO055_ADDRESS_A  0x28
 #define BNO055_ADDRESS_B  0x29
@@ -212,12 +212,12 @@ enum bno055_vector_type {
 };
 
 struct bno055 {
-	i2c_inst_t *i2c;
+	struct i2c_bus *i2c;
 	enum bno055_operation_mode mode;
 	uint8_t addr;
 };
 
-int bno055_init(struct bno055 *bno055, i2c_inst_t *i2c, uint8_t addr);
+int bno055_init(struct bno055 *bno055, struct i2c_bus *i2c, uint8_t addr);
 
 int bno055_ping(struct bno055 *bno055);
 

@@ -29,33 +29,16 @@
 #include "util.h"
 
 static int bno055_read(struct bno055 *bno055, uint8_t addr, uint8_t *data, size_t len) {
-	int ret = i2c_write_blocking(bno055->i2c, bno055->addr, &addr, 1, false);
-	if (ret != 1) {
-		log_printf(&util_logger, "bno055_read W 0x%02x 1: %d", addr, ret);
-		return -1;
-	}
 
-	ret = i2c_read_blocking(bno055->i2c, bno055->addr, data, len, false);
-	if (ret != len) {
-		log_printf(&util_logger, "bno055_read R 0x%02x %d: %d", addr, len, ret);
-		return -2;
-	}
-
-	return 0;
+	return i2c_bus_read(bno055->i2c, bno055->addr, addr, data, len);
 }
 
 static int bno055_set_page(struct bno055 *bno055, uint8_t page)
 {
-	int ret;
-	ret = i2c_write_blocking(bno055->i2c, bno055->addr, (uint8_t[]){ BNO055_REG_PAGE_ID, page }, 2, false);
-	if (ret != 2) {
-		return ret;
-	}
-
-	return 0;
+	return i2c_bus_write(bno055->i2c, bno055->addr, (uint8_t[]){ BNO055_REG_PAGE_ID, page }, 2);
 }
 
-int bno055_init(struct bno055 *bno055, i2c_inst_t *i2c, uint8_t addr)
+int bno055_init(struct bno055 *bno055, struct i2c_bus *i2c, uint8_t addr)
 {
 	int ret;
 	uint8_t rxdata;
@@ -89,8 +72,8 @@ int bno055_init(struct bno055 *bno055, i2c_inst_t *i2c, uint8_t addr)
 
 	txdata[0] = BNO055_REG_PWR_MODE;
 	txdata[1] = BNO055_POWER_MODE_NORMAL;
-	ret = i2c_write_blocking(bno055->i2c, bno055->addr, txdata, 2, false);
-	if (ret != 2) {
+	ret = i2c_bus_write(bno055->i2c, bno055->addr, txdata, 2);
+	if (ret) {
 		log_printf(&util_logger, "bno055_init pwr_mode: %d", ret);
 		return ret;
 	}
@@ -115,8 +98,8 @@ int bno055_ping(struct bno055 *bno055)
 	int ret;
 	uint8_t rxdata;
 
-	ret = i2c_read_blocking(bno055->i2c, bno055->addr, &rxdata, 1, false);
-	if (ret != 1) {
+	ret = i2c_bus_read_raw(bno055->i2c, bno055->addr, &rxdata, 1);
+	if (ret) {
 		return ret;
 	}
 
@@ -127,8 +110,8 @@ int bno055_reset(struct bno055 *bno055)
 {
 	int i, ret;
 
-	ret = i2c_write_blocking(bno055->i2c, bno055->addr, (uint8_t[]){ BNO055_REG_SYS_TRIGGER, 0x20 }, 2, false);
-	if (ret != 2) {
+	ret = i2c_bus_write(bno055->i2c, bno055->addr, (uint8_t[]){ BNO055_REG_SYS_TRIGGER, 0x20 }, 2);
+	if (ret) {
 		return ret;
 	}
 
@@ -147,8 +130,8 @@ int bno055_reset(struct bno055 *bno055)
 int bno055_set_operation_mode(struct bno055 *bno055, enum bno055_operation_mode mode)
 {
 	int ret;
-	ret = i2c_write_blocking(bno055->i2c, bno055->addr, (uint8_t[]){ BNO055_REG_OPR_MODE, mode }, 2, false);
-	if (ret != 2) {
+	ret = i2c_bus_write(bno055->i2c, bno055->addr, (uint8_t[]){ BNO055_REG_OPR_MODE, mode }, 2);
+	if (ret) {
 		return ret;
 	}
 
@@ -174,8 +157,8 @@ int bno055_set_external_crystal(struct bno055 *bno055, bool external)
 
 	txdata[0] = BNO055_REG_SYS_TRIGGER;
 	txdata[1] = external ? 0x80 : 0;
-	ret = i2c_write_blocking(bno055->i2c, bno055->addr, txdata, 2, false);
-	if (ret != 2) {
+	ret = i2c_bus_write(bno055->i2c, bno055->addr, txdata, 2);
+	if (ret) {
 		return ret;
 	}
 
