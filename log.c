@@ -17,7 +17,7 @@ struct log_message {
 
 void log_init(struct log_buffer *log)
 {
-	mutex_init(&log->lock);
+	critical_section_init(&log->lock);
 	memset(log->buf, 0, sizeof(log->buf));
 	log->space = sizeof(log->buf);
 	log->insert_idx = 0;
@@ -105,7 +105,7 @@ void log_write(struct log_buffer *log, const char *message, uint16_t len)
 		return;
 	}
 
-	mutex_enter_blocking(&log->lock);
+	critical_section_enter_blocking(&log->lock);
 
 	__log_make_space(log, space_reqd);
 
@@ -117,7 +117,7 @@ void log_write(struct log_buffer *log, const char *message, uint16_t len)
 	__log_write_bytes(log, (const uint8_t *)&msg, sizeof(msg));
 	__log_write_bytes(log, (const uint8_t *)message, len);
 
-	mutex_exit(&log->lock);
+	critical_section_exit(&log->lock);
 }
 
 int log_printf(struct log_buffer *log, const char *fmt, ...)
@@ -137,7 +137,7 @@ int log_printf(struct log_buffer *log, const char *fmt, ...)
 
 uint16_t log_drain(struct log_buffer *log, uint8_t *buf, uint16_t size)
 {
-	mutex_enter_blocking(&log->lock);
+	critical_section_enter_blocking(&log->lock);
 
 	uint16_t extract_idx = log->extract_idx;
 	uint16_t insert_idx = log->insert_idx;
@@ -157,7 +157,7 @@ uint16_t log_drain(struct log_buffer *log, uint8_t *buf, uint16_t size)
 		extract_idx = (extract_idx + msg_size) % sizeof(log->buf);
 	}
 
-	mutex_exit(&log->lock);
+	critical_section_exit(&log->lock);
 
 	return used;
 }

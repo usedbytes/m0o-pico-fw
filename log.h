@@ -9,12 +9,12 @@
 
 #include <stdint.h>
 
-#include "pico/mutex.h"
+#include "pico/critical_section.h"
 
 #define LOG_BUFFER_SIZE 1024
 struct log_buffer {
 	uint8_t buf[LOG_BUFFER_SIZE];
-	mutex_t lock;
+	critical_section_t lock;
 	volatile uint16_t insert_idx;
 	volatile uint16_t extract_idx;
 	volatile uint16_t space;
