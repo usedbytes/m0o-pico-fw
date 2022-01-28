@@ -27,4 +27,8 @@ int i2c_bus_read_raw(struct i2c_bus *bus, uint8_t dev_addr, uint8_t *data, size_
 int i2c_bus_write(struct i2c_bus *bus, uint8_t dev_addr, uint8_t *data, size_t len);
 int i2c_bus_write_byte(struct i2c_bus *bus, uint8_t dev_addr, uint8_t data);
 
+// New API. This will shortly be the ONLY API
+int i2c_bus_read_blocking(struct i2c_bus *bus, uint8_t addr, uint8_t *dst, size_t len);
+int i2c_bus_write_blocking(struct i2c_bus *bus, uint8_t addr, const uint8_t *src, size_t len);
+
 #endif /* __I2C_BUS_H__ */

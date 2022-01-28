@@ -80,3 +80,33 @@ int i2c_bus_write_byte(struct i2c_bus *bus, uint8_t dev_addr, uint8_t data)
 {
 	return i2c_bus_write(bus, dev_addr, &data, 1);
 }
+
+int i2c_bus_read_blocking(struct i2c_bus *bus, uint8_t addr, uint8_t *dst, size_t len)
+{
+	int ret;
+
+	mutex_enter_blocking(&bus->lock);
+
+	ret = i2c_read_blocking(bus->i2c, addr, dst, len, false);
+	if (ret != len) {
+		log_printf(&util_logger, "i2c_bus_read 0x%02x: %d %d", addr, len, ret);
+	}
+
+	mutex_exit(&bus->lock);
+	return ret;
+}
+
+int i2c_bus_write_blocking(struct i2c_bus *bus, uint8_t addr, const uint8_t *src, size_t len)
+{
+	int ret;
+
+	mutex_enter_blocking(&bus->lock);
+
+	ret = i2c_write_blocking(bus->i2c, addr, src, len, false);
+	if (ret != len) {
+		log_printf(&util_logger, "i2c_bus_write 0x%02x: %d %d", addr, len, ret);
+	}
+
+	mutex_exit(&bus->lock);
+	return ret;
+}
