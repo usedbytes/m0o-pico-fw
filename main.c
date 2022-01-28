@@ -10,8 +10,11 @@
 #include "hardware/dma.h"
 #include "hardware/i2c.h"
 
+#include "camera/camera.h"
+#include "camera/format.h"
+
 #include "bno055.h"
-#include "camera.h"
+#include "camera_task.h"
 #include "chassis.h"
 #include "comm.h"
 #include "log.h"

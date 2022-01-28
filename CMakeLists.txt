@@ -13,7 +13,7 @@ pico_sdk_init()
 
 add_executable(rebound
 	bno055.c
-	camera.c
+	camera_task.c
 	chassis.c
 	comm.c
 	i2c_bus.c
@@ -25,8 +25,7 @@ add_executable(rebound
 )
 
 add_subdirectory(vl53l0x)
-
-pico_generate_pio_header(rebound ${CMAKE_CURRENT_LIST_DIR}/camera.pio)
+add_subdirectory(camera)
 
 pico_add_extra_outputs(rebound)
 
@@ -35,6 +34,7 @@ set_target_properties(rebound PROPERTIES COMPILE_FLAGS "-Wall")
 pico_set_linker_script(rebound ${CMAKE_CURRENT_SOURCE_DIR}/rebound_noboot2.ld)
 
 target_link_libraries(rebound
+	camera
 	pico_multicore
 	pico_stdlib
 	pico_stdlib_headers
