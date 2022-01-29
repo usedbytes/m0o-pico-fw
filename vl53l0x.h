@@ -64,6 +64,7 @@ int vl53l0x_stop_measurement(struct vl53l0x_dev *dev);
 int vl53l0x_check_stop_completed(struct vl53l0x_dev *dev);
 int vl53l0x_check_measurement_ready(struct vl53l0x_dev *dev);
 int vl53l0x_get_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasurementData_t *data);
+int vl53l0x_get_outstanding_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasurementData_t *data);
 
 int vl53l0x_do_single_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasurementData_t *data);
 

@@ -278,18 +278,9 @@ int vl53l0x_get_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasurementD
 	return 0;
 }
 
-int vl53l0x_do_single_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasurementData_t *data)
+int vl53l0x_get_outstanding_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasurementData_t *data)
 {
-	int i;
-	int ret = vl53l0x_set_measurement_mode(dev, VL53L0X_DEVICEMODE_SINGLE_RANGING);
-	if (ret) {
-		return ret;
-	}
-
-	ret = vl53l0x_start_measurement(dev);
-	if (ret) {
-		return ret;
-	}
+	int ret, i;
 
 	for (i = 0; i < 50; i++) {
 		ret = vl53l0x_check_measurement_ready(dev);
@@ -306,6 +297,21 @@ int vl53l0x_do_single_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasur
 	}
 
 	return vl53l0x_get_measurement(dev, data);
+}
+
+int vl53l0x_do_single_measurement(struct vl53l0x_dev *dev, VL53L0X_RangingMeasurementData_t *data)
+{
+	int ret = vl53l0x_set_measurement_mode(dev, VL53L0X_DEVICEMODE_SINGLE_RANGING);
+	if (ret) {
+		return ret;
+	}
+
+	ret = vl53l0x_start_measurement(dev);
+	if (ret) {
+		return ret;
+	}
+
+	return vl53l0x_get_outstanding_measurement(dev, data);
 }
 
 int vl53l0x_get_platform_error(void)
