@@ -1,3 +1,6 @@
 [submodule "vl53l0x"]
 	path = vl53l0x
 	url = git@github.com:usedbytes/VL53L0X_API.git
+[submodule "camera"]
+	path = camera
+	url = https://github.com/usedbytes/camera-pico-ov7670.git
