@@ -104,6 +104,10 @@ static int8_t clamp8(int16_t value) {
 	return value;
 }
 
+static int16_t abs16(int16_t v) {
+	return v < 0 ? -v : v;
+}
+
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	struct bt_hid_state state;
@@ -178,6 +182,125 @@ static int reinit_vl53l0x(struct vl53l0x_dev *sens)
 	return 0;
 }
 
+struct controller {
+	int16_t kp;
+	int16_t scale;
+};
+
+struct controller heading_ctrl = {
+	.kp = (int16_t)(1.8f * 16), // 1.0
+	.scale = 256,
+};
+
+struct controller distance_ctrl = {
+	.kp = (int16_t)(0.15f * 16), // 1.0
+	.scale = 16,
+};
+
+int8_t controller_tick(struct controller *ctrl, int16_t diff)
+{
+	return clamp8(((int32_t)diff * ctrl->kp) / ctrl->scale);
+}
+
+struct plan_stage {
+#define SOURCE_HEADING  1
+#define SOURCE_DISTANCE 2
+#define SOURCE_RED_BLOB 4
+	uint8_t sources;
+	uint8_t termination_source;
+	int16_t target_distance;
+	int16_t target_heading;
+};
+
+struct plan_stage stages[] = {
+	{ // First just turn to face up the arena
+		.sources = (SOURCE_HEADING),
+		.termination_source = (SOURCE_HEADING),
+		.target_heading = 90 * 16,
+	},
+	{ // Drive up to first trough level
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 250,
+		.target_heading = 90 * 16,
+	},
+	{ // Turn to face trough
+		.sources = (SOURCE_HEADING),
+		.termination_source = (SOURCE_HEADING),
+		.target_heading = 180 * 16,
+	},
+	{ // Drive to first trough
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 930,
+		.target_heading = 180 * 16,
+	},
+	{ // Back up a bit
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 600,
+		.target_heading = 180 * 16,
+	},
+
+	{ // Face back up the arena
+		.sources = (SOURCE_HEADING),
+		.termination_source = (SOURCE_HEADING),
+		.target_heading = 90 * 16,
+	},
+	{ // Drive up to second trough level
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 750,
+		.target_heading = 90 * 16,
+	},
+	{ // Turn to face trough
+		.sources = (SOURCE_HEADING),
+		.termination_source = (SOURCE_HEADING),
+		.target_heading = 0 * 16,
+	},
+	{ // Drive to second trough
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 930,
+		.target_heading = 0 * 16,
+	},
+	{ // Back up a bit
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 600,
+		.target_heading = 0 * 16,
+	},
+
+	{ // Face back up the arena
+		.sources = (SOURCE_HEADING),
+		.termination_source = (SOURCE_HEADING),
+		.target_heading = 90 * 16,
+	},
+	{ // Drive up to third trough level
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 1125,
+		.target_heading = 90 * 16,
+	},
+	{ // Turn to face trough
+		.sources = (SOURCE_HEADING),
+		.termination_source = (SOURCE_HEADING),
+		.target_heading = 180 * 16,
+	},
+	{ // Drive to third trough
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 930,
+		.target_heading = 180 * 16,
+	},
+	{ // Back up a bit
+		.sources = (SOURCE_HEADING | SOURCE_DISTANCE),
+		.termination_source = (SOURCE_DISTANCE),
+		.target_distance = 600,
+		.target_heading = 180 * 16,
+	},
+};
+
 extern void local_capture_cb(struct camera_buffer *buf, void *data);
 
 int main()
@@ -232,7 +355,13 @@ int main()
 	local_capture_qitem.capture.buf = buf;
 	local_capture_qitem.capture.frame_cb = local_capture_cb;
 
+	int stage_idx = 0;
+	struct plan_stage *stage = NULL;
+	bool last_mode = false;
+	bool stage_done = false;
+
 	int pos;
+	int16_t blob_pos;
 
 	while (1) {
 		if (!heading_mode) {
@@ -266,10 +395,112 @@ int main()
 			}
 			*/
 
+			last_mode = false;
+
 			sleep_ms(300);
 			continue;
 		}
 
+		if (last_mode != heading_mode) {
+			stage_idx = 0;
+			stage = &stages[stage_idx];
+
+			log_printf(&util_logger, "restarting bno055 to start");
+			// Re-init to reset heading?
+			bno055_init(&bno055, &i2c, BNO055_ADDR);
+		}
+
+		last_mode = true;
+
+		if (stage->sources & SOURCE_DISTANCE) {
+			vl53l0x_start_measurement(&sens);
+		}
+
+		if (stage->sources & SOURCE_RED_BLOB) {
+			// Request a camera frame
+			camera_queue_add_blocking(&local_capture_qitem);
+
+			// Wait for the result
+			queue_remove_blocking(&pos_queue, &pos);
+		}
+
+		int8_t linear = 0;
+		int8_t omega = 0;
+
+		int16_t heading_diff = 0;
+		int16_t distance_diff = 0;
+
+		if (stage->sources & SOURCE_DISTANCE) {
+			data.RangeStatus = -1;
+			vl53l0x_get_outstanding_measurement(&sens, &data);
+			if (data.RangeStatus != 0) {
+				sleep_ms(10);
+				continue;
+			}
+			distance_diff = stage->target_distance - data.RangeMilliMeter;
+
+			linear = controller_tick(&distance_ctrl, distance_diff);
+			log_printf(&util_logger, "linear diff: %d, speed: %d", distance_diff, linear);
+		}
+
+		if (stage->sources & SOURCE_HEADING) {
+			const int8_t min_omega = 9;
+			const int16_t small_angle = 3;
+			int16_t heading;
+			bno055_get_heading(&bno055, &heading);
+
+			heading_diff = heading - stage->target_heading;
+			while (heading_diff > (180 * 16)) {
+				heading_diff -= (360 * 16);
+			}
+
+			omega = controller_tick(&heading_ctrl, heading_diff);
+
+			// HAX: Need an integral term
+			if (heading_diff >= small_angle && omega < min_omega) {
+				omega = min_omega;
+			}
+
+			if (heading_diff <= -small_angle && omega > -min_omega) {
+				omega = -min_omega;
+			}
+
+			log_printf(&util_logger, "heading diff: %3.2f, omega: %d", heading_diff / 16.0f, omega);
+		}
+
+		if ((stage->termination_source & SOURCE_DISTANCE) &&
+			abs16(distance_diff) < 10) {
+			log_printf(&util_logger, "distance terminated");
+			stage_done = true;
+		}
+
+		if ((stage->termination_source & SOURCE_HEADING) &&
+			abs16(heading_diff) < 10) {
+			log_printf(&util_logger, "heading terminated");
+			stage_done = true;
+		}
+
+		if (stage_done) {
+			log_printf(&util_logger, "stage %d done", stage_idx);
+			linear = 0;
+			omega = 0;
+			stage_idx++;
+			if (stage_idx >= sizeof(stages) / sizeof(stages[0])) {
+				heading_mode = false;
+			} else {
+				stage = &stages[stage_idx];
+			}
+			stage_done = false;
+
+			chassis_set(&chassis, linear, omega);
+			sleep_ms(300);
+		}
+
+		chassis_set(&chassis, linear, omega);
+
+		sleep_ms(10);
+
+		/*
 		// Request a camera frame
 		camera_queue_add_blocking(&local_capture_qitem);
 
@@ -281,6 +512,7 @@ int main()
 		log_printf(&util_logger, "Middle: %d, diff: %d", pos, diff);
 		chassis_set(&chassis, 0, diff * 3);
 		sleep_ms(10);
+		*/
 	}
 
 	/*
