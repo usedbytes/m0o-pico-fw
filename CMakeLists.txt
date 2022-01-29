@@ -19,7 +19,6 @@ add_executable(rebound
 	i2c_bus.c
 	log.c
 	main.c
-	ov7670.c
 	util.c
 	vl53l0x.c
 )
