@@ -25,4 +25,7 @@ void chassis_set_raw(struct chassis *chassis, int8_t left, int8_t right);
 // to meet the requested rotational speed.
 void chassis_set(struct chassis *chassis, int8_t linear, int8_t rot);
 
+void slice_set(uint slice, int8_t value);
+void init_slice(uint slice, uint8_t pin_a);
+
 #endif /* __CHASSIS_H__ */

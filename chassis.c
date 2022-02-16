@@ -14,7 +14,7 @@
 #define PWM_MIN 80
 #define PWM_MAX (PWM_MIN + 127)
 
-static inline void init_slice(uint slice, uint8_t pin_a)
+void init_slice(uint slice, uint8_t pin_a)
 {
 	gpio_set_function(pin_a, GPIO_FUNC_PWM);
 	gpio_set_function(pin_a + 1, GPIO_FUNC_PWM);
@@ -37,7 +37,7 @@ static inline uint8_t abs8(int8_t v) {
 	return v < 0 ? -v : v;
 }
 
-static void slice_set(uint slice, int8_t value)
+void slice_set(uint slice, int8_t value)
 {
 	uint8_t mag = abs8(value);
 

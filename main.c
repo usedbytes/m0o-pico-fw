@@ -9,6 +9,7 @@
 #include "pico/multicore.h"
 #include "hardware/dma.h"
 #include "hardware/i2c.h"
+#include "hardware/pwm.h"
 
 #include "camera/camera.h"
 #include "camera/format.h"
@@ -49,8 +50,34 @@
 #define BTN_BIT_HEART   12
 #define BTN_BIT_STAR    13
 
+#define BOOM_LIFT_A     6
+#define BOOM_LIFT_B     7
+#define BOOM_LIFT_LIMIT 22
+#define BOOM_EXTEND_A   8
+#define BOOM_EXTEND_B   9
+#define BOOM_EXTEND_ENC   11  // Has to be connected to a PWM 'B' pin to count
+#define BOOM_EXTEND_LIMIT 10
+
+#define HAT_UP    (1 << 0)
+#define HAT_RIGHT (1 << 1)
+#define HAT_DOWN  (1 << 2)
+#define HAT_LEFT  (1 << 3)
+const uint8_t hat_pos_to_dirs[] = {
+	[0] = HAT_UP,
+	[1] = HAT_UP | HAT_RIGHT,
+	[2] = HAT_RIGHT,
+	[3] = HAT_RIGHT | HAT_DOWN,
+	[4] = HAT_DOWN,
+	[5] = HAT_DOWN | HAT_LEFT,
+	[6] = HAT_LEFT,
+	[7] = HAT_LEFT | HAT_UP,
+};
+
 struct chassis chassis;
 volatile bool heading_mode;
+
+const uint boom_lift_slice =   (BOOM_LIFT_A  / 2) % 8;
+const uint boom_extend_slice = (BOOM_EXTEND_A  / 2) % 8;
 
 struct bt_hid_state {
 	uint16_t buttons;
@@ -111,6 +138,8 @@ static int16_t abs16(int16_t v) {
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
 	struct bt_hid_state state;
+	int8_t lift_val = 0;
+	int8_t extend_val = 0;
 
 	memcpy(&state, data_in, sizeof(state));
 
@@ -131,9 +160,28 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 		heading_mode = false;
 	}
 
+	if (state.hat <= 7) {
+		uint8_t hat_dirs = hat_pos_to_dirs[state.hat];
+
+		if (hat_dirs & HAT_UP) {
+			lift_val = 127;
+		} else if (hat_dirs & HAT_DOWN) {
+			lift_val = -127;
+		}
+
+		if (hat_dirs & HAT_RIGHT) {
+			extend_val = 127;
+		} else if (hat_dirs & HAT_LEFT) {
+			extend_val = -127;
+		}
+	}
+
 	int8_t linear = clamp8(-(state.ly - 128));
 	int8_t rot = clamp8(-(state.rx - 128));
 	chassis_set(&chassis, linear, rot);
+
+	slice_set(boom_lift_slice, lift_val);
+	slice_set(boom_extend_slice, extend_val);
 
 	return COMM_RSP_OK;
 }
@@ -308,6 +356,21 @@ int main()
 	gpio_init(PICO_DEFAULT_LED_PIN);
 	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
 
+	const uint enc_slice = (BOOM_EXTEND_ENC / 2) % 8;
+	{ /* Boom bits, needs breaking out */
+		init_slice(boom_lift_slice, BOOM_LIFT_A);
+		init_slice(boom_extend_slice, BOOM_EXTEND_A);
+
+		gpio_set_function(BOOM_EXTEND_ENC, GPIO_FUNC_PWM);
+
+		pwm_config c = pwm_get_default_config();
+		pwm_config_set_clkdiv_mode(&c, PWM_DIV_B_RISING);
+		pwm_init(enc_slice, &c, true);
+
+		gpio_init(BOOM_LIFT_LIMIT);
+		gpio_set_pulls(BOOM_LIFT_LIMIT, true, false);
+	}
+
 	util_init();
 
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
@@ -398,6 +461,8 @@ int main()
 			last_mode = false;
 
 			sleep_ms(300);
+
+			log_printf(&util_logger, "Encoder: %d, lift endstop: %d", pwm_get_counter(enc_slice), gpio_get(BOOM_LIFT_LIMIT));
 			continue;
 		}
 
