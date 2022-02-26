@@ -19,6 +19,7 @@ add_executable(rebound
 	i2c_bus.c
 	log.c
 	main.c
+	scheduler.c
 	util.c
 	vl53l0x.c
 )
