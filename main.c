@@ -259,6 +259,42 @@ void blink_task_init(struct blink_task *task, uint pin, uint period_ms)
 	};
 }
 
+struct count_task {
+	struct task task;
+	uint offset;
+	uint count;
+	uint increment;
+};
+#define to_count_task(_t) ((struct count_task *)(_t))
+
+absolute_time_t count_on_register(struct task *t, absolute_time_t tick)
+{
+	struct count_task *task = to_count_task(t);
+
+	return tick + task->offset + (1000 * 1000);
+}
+
+absolute_time_t count_on_tick(struct task *t, absolute_time_t tick)
+{
+	struct count_task *task = to_count_task(t);
+
+	log_printf(&util_logger, "count (%5d) %d", task->offset, task->count);
+	task->count += task->increment;
+
+	return tick + (1000 * 1000);
+}
+
+void count_task_init(struct count_task *task, uint count, uint increment, uint offset)
+{
+	task->count = count;
+	task->increment = increment;
+	task->offset = offset;
+	task->task = (struct task){
+		.on_register = count_on_register,
+		.on_tick = count_on_tick,
+	};
+}
+
 int main()
 {
 	queue_t *cmdq = &core1_thread_state.command_queue;
@@ -274,16 +310,32 @@ int main()
 	struct blink_task blink_task;
 	blink_task_init(&blink_task, PICO_DEFAULT_LED_PIN, 300);
 
-	struct command_list *cmd_list = command_list_alloc(3);
-	struct command *cmd = command_list_alloc_commands(cmd_list, 1);
+	struct count_task counters[3];
+	const uint ncounters = sizeof(counters) / sizeof(counters[0]);
 
-	cmd->target = 0;
-	cmd->prop = SCHEDULER_TASK_REGISTER;
-	cmd->value = (uint32_t)&blink_task;
+	struct command_list *cmd_list = command_list_alloc(1 + ncounters);
+	struct command *cmds = command_list_alloc_commands(cmd_list, 1 + ncounters);
+
+	cmds[0].target = 0;
+	cmds[0].prop = SCHEDULER_TASK_REGISTER;
+	cmds[0].value = (uint32_t)&blink_task;
+
+	uint i;
+	for (i = 0; i < ncounters; i++) {
+		count_task_init(&counters[i], i, ncounters, i * 1000);
+
+		cmds[1 + i].target = 0;
+		cmds[1 + i].prop = SCHEDULER_TASK_REGISTER;
+		cmds[1 + i].value = (uint32_t)&counters[i];
+	}
+
 	command_list_submit_blocking(cmd_list, cmdq);
 	command_list_wait_for_completion(cmd_list);
 
-	task_id_t blink_task_id = cmd->result;
+	task_id_t blink_task_id = cmds[0].result;
+	command_list_reset(cmd_list);
+
+	struct command *cmd = command_list_alloc_commands(cmd_list, 1);
 
 	while (1) {
 		cmd->target = blink_task_id;

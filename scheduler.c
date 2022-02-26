@@ -3,18 +3,25 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+#include <inttypes.h>
 #include <stdlib.h>
 
 #include "scheduler.h"
 
+struct list_node {
+	struct list_node *prev;
+	struct list_node *next;
+};
+
 struct scheduler_slot {
+	struct list_node node;
 	absolute_time_t scheduled;
 	struct task *task;
 };
 
 struct scheduler {
 	uint n_slots;
-	// TODO: Implement a smarter structure for sorting tasks
+	struct list_node head;
 	struct scheduler_slot *slots;
 };
 
@@ -58,44 +65,68 @@ struct scheduler *scheduler_create(uint8_t n_slots)
 absolute_time_t scheduler_next_tick(struct scheduler *sched)
 {
 	absolute_time_t tick = at_the_end_of_time;
-	uint8_t i;
-	for (i = 0; i < sched->n_slots; i++) {
-		struct scheduler_slot *slot = &sched->slots[i];
-		if (!slot->task) {
-			continue;
-		}
-
-		if (slot->scheduled < tick) {
-			tick = slot->scheduled;
-		}
+	if (sched->head.next) {
+		tick = ((struct scheduler_slot *)(sched->head.next))->scheduled;
 	}
 
 	return tick;
 }
 
-absolute_time_t scheduler_tick(struct scheduler *sched)
+static void list_remove(struct list_node *node)
 {
-	absolute_time_t now = get_absolute_time();
-	absolute_time_t next = at_the_end_of_time;
+	struct list_node *prev_node = node->prev;
+	struct list_node *next_node = node->next;
 
-	uint8_t i;
-	for (i = 0; i < sched->n_slots; i++) {
-		struct scheduler_slot *slot = &sched->slots[i];
-		if (!slot->task) {
-			continue;
-		}
-
-		// TODO: Doesn't run tasks in order
-		if (slot->scheduled < now) {
-			slot->scheduled = slot->task->on_tick(slot->task, now);
-		}
-
-		if (slot->scheduled < next) {
-			next = slot->scheduled;
-		}
+	prev_node->next = node->next;
+	if (next_node) {
+		next_node->prev = node->prev;
 	}
 
-	return next;
+	node->next = NULL;
+	node->prev = NULL;
+}
+
+static void list_insert_after(struct list_node *insert, struct list_node *after)
+{
+	struct list_node *next_node = after->next;
+
+	after->next = insert;
+	insert->prev = after;
+	insert->next = next_node;
+	if (next_node) {
+		next_node->prev = insert;
+	}
+}
+
+static void insert_sorted(struct scheduler *sched, struct scheduler_slot *insert)
+{
+	struct list_node *node = &sched->head;
+	while (node->next) {
+		struct scheduler_slot *next_slot = (struct scheduler_slot *)node->next;
+		if (next_slot->scheduled > insert->scheduled) {
+			break;
+		}
+
+		node = node->next;
+	}
+
+	list_insert_after(&insert->node, node);
+}
+
+void scheduler_tick(struct scheduler *sched)
+{
+	absolute_time_t now = get_absolute_time();
+
+	struct scheduler_slot *slot = (struct scheduler_slot *)sched->head.next;
+	while (slot && slot->scheduled <= now) {
+		struct scheduler_slot *next_slot = (struct scheduler_slot *)slot->node.next;
+
+		list_remove(&slot->node);
+		slot->scheduled = slot->task->on_tick(slot->task, now);
+		insert_sorted(sched, slot);
+
+		slot = next_slot;
+	}
 }
 
 task_id_t scheduler_task_register(struct scheduler *sched, struct task *task)
@@ -117,6 +148,8 @@ task_id_t scheduler_task_register(struct scheduler *sched, struct task *task)
 		slot->scheduled = at_the_end_of_time;
 	}
 
+	insert_sorted(sched, slot);
+
 	return id;
 }
 
@@ -132,5 +165,7 @@ void scheduler_task_command(struct scheduler *sched, task_id_t tid, uint16_t pro
 	}
 
 	absolute_time_t now = get_absolute_time();
+	list_remove(&slot->node);
 	slot->scheduled = slot->task->on_command(slot->task, now, prop, value, result);
+	insert_sorted(sched, slot);
 }

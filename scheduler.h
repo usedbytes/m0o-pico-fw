@@ -26,7 +26,7 @@ typedef uint8_t task_id_t;
 struct scheduler *scheduler_create(uint8_t n_slots);
 
 absolute_time_t scheduler_next_tick(struct scheduler *sched);
-absolute_time_t scheduler_tick(struct scheduler *sched);
+void scheduler_tick(struct scheduler *sched);
 
 task_id_t scheduler_task_register(struct scheduler *sched, struct task *task);
 void scheduler_task_command(struct scheduler *sched, task_id_t tid, uint16_t prop, uint32_t *value, uint8_t *result);
