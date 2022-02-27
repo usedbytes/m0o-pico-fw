@@ -126,7 +126,7 @@ int platform_run_function(struct platform *platform, scheduled_func_t func, void
 int platform_set_velocity(struct platform *platform, int8_t linear, int8_t angular)
 {
 	struct platform_message msg = {
-		.type = PLATFORM_MESSAGE_RUN,
+		.type = PLATFORM_MESSAGE_VELOCITY,
 		.velocity = {
 			.linear = linear,
 			.angular = angular,

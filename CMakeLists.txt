@@ -17,6 +17,7 @@ add_executable(rebound
 	chassis.c
 	comm.c
 	i2c_bus.c
+	input.c
 	log.c
 	main.c
 	platform.c
