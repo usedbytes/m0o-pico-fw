@@ -165,7 +165,10 @@ void scheduler_task_command(struct scheduler *sched, task_id_t tid, uint16_t pro
 	}
 
 	absolute_time_t now = get_absolute_time();
-	list_remove(&slot->node);
-	slot->scheduled = slot->task->on_command(slot->task, now, prop, value, result);
-	insert_sorted(sched, slot);
+	absolute_time_t schedule;
+	*result = slot->task->on_command(slot->task, now, &schedule, prop, value);
+	if (schedule != slot->scheduled) {
+		list_remove(&slot->node);
+		insert_sorted(sched, slot);
+	}
 }

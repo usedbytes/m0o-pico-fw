@@ -264,20 +264,21 @@ absolute_time_t blink_on_tick(struct task *t, absolute_time_t tick)
 	return tick + (task->period_ms * 1000 / 2);
 }
 
-absolute_time_t blink_on_command(struct task *t, absolute_time_t tick, uint16_t prop, uint32_t *value, uint8_t *result)
+uint8_t blink_on_command(struct task *t, absolute_time_t tick, absolute_time_t *schedule, uint16_t prop, uint32_t *value)
 {
 	struct blink_task *task = to_blink_task(t);
 
 	switch ((enum blink_task_prop)prop) {
 	case BLINK_TASK_PERIOD:
 		task->period_ms = *value;
+		*schedule = tick + (*value * 1000 / 2);
 		break;
 	default:
-		*result = 1;
-		return at_the_end_of_time;
+		*schedule = at_the_end_of_time;
+		return 1;
 	}
 
-	return tick + (task->period_ms * 1000 / 2);
+	return 0;
 }
 
 void blink_task_init(struct blink_task *task, uint pin, uint period_ms)

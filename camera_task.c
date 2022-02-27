@@ -311,32 +311,33 @@ static inline int __i2c_read_blocking(void *i2c_handle, uint8_t addr, uint8_t *d
 
 #define to_camera_task(_t) ((struct camera_task *)(_t))
 
-absolute_time_t camera_on_command(struct task *t, absolute_time_t tick, uint16_t prop, uint32_t *value, uint8_t *result)
+uint8_t camera_on_command(struct task *t, absolute_time_t tick, absolute_time_t *schedule, uint16_t prop, uint32_t *value)
 {
 	struct camera_task *task = to_camera_task(t);
 
 	switch ((enum camera_task_prop)prop) {
 	case CAMERA_TASK_CAPTURE:
 		if (task->queued) {
-			// Busy
-			*result = 0;
-
 			// FIXME: What to do here? Want to sleep for frame completion
-			return tick + 1000;
+			*schedule = tick + 1000;
+
+			// Busy
+			return 0;
 		} else {
 			task->queued = (struct camera_buffer *)(*value);
-			*result = task->frame_no++;
+
 			// Immediately re-schedule to trigger frame.
 			// TODO: Just trigger from here instead?
-			return tick;
+			*schedule = tick;
+			return task->frame_no++;
 		}
 		break;
 	case CAMERA_TASK_GET_FRAME_COMPLETED:
 		*value = task->completed_frame_no;
-		return at_the_end_of_time;
+		return 0;
 	default:
-		*result = 0;
-		return at_the_end_of_time;
+		*schedule = at_the_end_of_time;
+		return 0;
 	}
 }
 

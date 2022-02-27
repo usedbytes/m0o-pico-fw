@@ -18,7 +18,7 @@ struct task {
 	void (*on_remove)(struct task *task);
 	absolute_time_t (*on_tick)(struct task *task, absolute_time_t tick);
 	// FIXME: Ugly interface.
-	absolute_time_t (*on_command)(struct task *task, absolute_time_t tick, uint16_t prop, uint32_t *value, uint8_t *result);
+	uint8_t (*on_command)(struct task *task, absolute_time_t tick, absolute_time_t *schedule, uint16_t prop, uint32_t *value);
 };
 
 typedef uint8_t task_id_t;
