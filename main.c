@@ -11,10 +11,16 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 
+#include "camera_task.h"
 #include "comm.h"
 #include "log.h"
 #include "scheduler.h"
 #include "util.h"
+
+#define CAMERA_PIN_D0        16
+#define CAMERA_GPIO_XCLK     21
+#define CAMERA_PIO           pio0
+#define CAMERA_DMA_CHAN_BASE 0
 
 #define I2C_BUS      i2c0
 #define I2C_PIN_SDA  0
@@ -368,9 +374,27 @@ int main()
 	struct blink_task blink_task;
 	blink_task_init(&blink_task, PICO_DEFAULT_LED_PIN, 300);
 
+	struct camera_task camera_task;
+	struct camera_platform_config camera_platform = {
+		.i2c_write_blocking = __i2c_write_blocking,
+		.i2c_read_blocking = __i2c_read_blocking,
+		.i2c_handle = &i2c,
+
+		.pio = CAMERA_PIO,
+		.xclk_pin = CAMERA_GPIO_XCLK,
+		.xclk_divider = 9,
+		.base_pin = CAMERA_PIN_D0,
+		.base_dma_channel = -1,
+	};
+
+	task_id_t camera_task_id = 0;
+	int ret = camera_task_init(&camera_task, &camera_platform);
+	if (ret == 0) {
+		camera_task_id = register_task(cmdq, &camera_task.task);
+	}
+
 	struct count_task counters[3];
 	const uint ncounters = sizeof(counters) / sizeof(counters[0]);
-
 	struct command_list *cmd_list = command_list_alloc(1 + ncounters);
 	struct command *cmds = command_list_alloc_commands(cmd_list, 1 + ncounters);
 

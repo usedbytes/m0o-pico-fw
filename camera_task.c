@@ -309,6 +309,88 @@ static inline int __i2c_read_blocking(void *i2c_handle, uint8_t addr, uint8_t *d
 	return i2c_bus_read_blocking((struct i2c_bus *)i2c_handle, addr, dst, len);
 }
 
+#define to_camera_task(_t) ((struct camera_task *)(_t))
+
+absolute_time_t camera_on_command(struct task *t, absolute_time_t tick, uint16_t prop, uint32_t *value, uint8_t *result)
+{
+	struct camera_task *task = to_camera_task(t);
+
+	switch ((enum camera_task_prop)prop) {
+	case CAMERA_TASK_CAPTURE:
+		if (task->queued) {
+			// Busy
+			*result = 0;
+
+			// FIXME: What to do here? Want to sleep for frame completion
+			return tick + 1000;
+		} else {
+			task->queued = (struct camera_buffer *)(*value);
+			*result = task->frame_no++;
+			// Immediately re-schedule to trigger frame.
+			// TODO: Just trigger from here instead?
+			return tick;
+		}
+		break;
+	case CAMERA_TASK_GET_FRAME_COMPLETED:
+		*value = task->completed_frame_no;
+		return at_the_end_of_time;
+	default:
+		*result = 0;
+		return at_the_end_of_time;
+	}
+}
+
+void camera_task_frame_cb(struct camera_buffer *buf, void *p)
+{
+	volatile uint8_t *completed = p;
+
+	// Signal completion
+	*completed = *completed + 1;
+}
+
+absolute_time_t camera_on_tick(struct task *t, absolute_time_t tick)
+{
+	struct camera_task *task = to_camera_task(t);
+
+	if (task->queued) {
+		int ret = camera_capture_with_cb(&task->camera, task->queued, true,
+				camera_task_frame_cb, (void *)&task->completed_frame_no);
+		if (ret) {
+			// Defer and try again later
+			// FIXME: Can only handle transient errors here.
+			// -2 indicates a frame is pending.
+			assert(ret == -2);
+
+			// TODO: Would ideally sleep for frame completion
+			return tick + 1000;
+		}
+
+		task->queued = NULL;
+	}
+
+	return at_the_end_of_time;
+}
+
+int camera_task_init(struct camera_task *task, struct camera_platform_config *platform)
+{
+	int ret = camera_init(&task->camera, platform);
+	if (ret) {
+		log_printf(&util_logger, "camera_init failed: %d", ret);
+		return ret;
+	}
+
+	task->frame_no = 1;
+	task->completed_frame_no = 0;
+	task->queued = NULL;
+
+	task->task = (struct task){
+		.on_command = camera_on_command,
+		.on_tick = camera_on_tick,
+	};
+
+	return 0;
+}
+
 void run_camera(queue_t *pos_queue, struct i2c_bus *i2c)
 {
 	log_printf(&util_logger, "run_camera()");

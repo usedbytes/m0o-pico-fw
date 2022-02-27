@@ -13,6 +13,7 @@
 #include "camera/camera.h"
 
 #include "i2c_bus.h"
+#include "scheduler.h"
 
 enum camera_queue_item_type {
 	CAMERA_QUEUE_ITEM_CAPTURE = 0,
@@ -47,5 +48,22 @@ void camera_buffer_free(struct camera_buffer *buf);
 
 void camera_queue_add_blocking(struct camera_queue_item *qitem);
 void run_camera(queue_t *pos_queue, struct i2c_bus *i2c);
+
+struct camera_task {
+	struct task task;
+	struct camera camera;
+
+	uint8_t frame_no;
+	volatile uint8_t completed_frame_no;
+
+	struct camera_buffer *queued;
+};
+
+enum camera_task_prop {
+	CAMERA_TASK_CAPTURE = 1,
+	CAMERA_TASK_GET_FRAME_COMPLETED = 2,
+};
+
+int camera_task_init(struct camera_task *task, struct camera_platform_config *platform);
 
 #endif /* __CAMERA_TASK_H__ */
