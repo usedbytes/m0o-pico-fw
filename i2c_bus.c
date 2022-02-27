@@ -7,6 +7,12 @@
 #include "log.h"
 #include "util.h"
 
+#ifdef NDEBUG
+#define DEBUG_PRINTF(...) log_printf(&util_logger, __VA_ARGS__)
+#else
+#define DEBUG_PRINTF(...) { }
+#endif
+
 void i2c_bus_init(struct i2c_bus *bus, i2c_inst_t *i2c, uint baudrate)
 {
 	bus->i2c = i2c;
@@ -20,7 +26,7 @@ int i2c_bus_read_raw(struct i2c_bus *bus, uint8_t dev_addr, uint8_t *data, size_
 
 	int ret = i2c_read_blocking(bus->i2c, dev_addr, data, len, false);
 	if (ret != len) {
-		log_printf(&util_logger, "i2c_bus_read_raw R %d: %d", len, ret);
+		DEBUG_PRINTF("i2c_bus_read_raw R %d: %d", len, ret);
 		ret = -2;
 		goto done;
 	}
@@ -39,14 +45,14 @@ int i2c_bus_read(struct i2c_bus *bus, uint8_t dev_addr, uint8_t reg_addr, uint8_
 
 	ret = i2c_write_blocking(bus->i2c, dev_addr, &reg_addr, 1, false);
 	if (ret != 1) {
-		log_printf(&util_logger, "i2c_bus_read W 0x%02x: %d", reg_addr, ret);
+		DEBUG_PRINTF("i2c_bus_read W 0x%02x: %d", reg_addr, ret);
 		ret = -1;
 		goto done;
 	}
 
 	ret = i2c_read_blocking(bus->i2c, dev_addr, data, len, false);
 	if (ret != len) {
-		log_printf(&util_logger, "i2c_bus_read R 0x%02x %d: %d", reg_addr, len, ret);
+		DEBUG_PRINTF("i2c_bus_read R 0x%02x %d: %d", reg_addr, len, ret);
 		ret = -2;
 		goto done;
 	}
@@ -65,7 +71,7 @@ int i2c_bus_write(struct i2c_bus *bus, uint8_t dev_addr, uint8_t *data, size_t l
 
 	ret = i2c_write_blocking(bus->i2c, dev_addr, data, len, false);
 	if (ret != len) {
-		log_printf(&util_logger, "i2c_bus_write W %d: %d", len, ret);
+		DEBUG_PRINTF("i2c_bus_write W %d: %d", len, ret);
 		ret = -1;
 		goto done;
 	}
@@ -89,7 +95,7 @@ int i2c_bus_read_blocking(struct i2c_bus *bus, uint8_t addr, uint8_t *dst, size_
 
 	ret = i2c_read_blocking(bus->i2c, addr, dst, len, false);
 	if (ret != len) {
-		log_printf(&util_logger, "i2c_bus_read 0x%02x: %d %d", addr, len, ret);
+		DEBUG_PRINTF("i2c_bus_read 0x%02x: %d %d", addr, len, ret);
 	}
 
 	mutex_exit(&bus->lock);
@@ -104,7 +110,7 @@ int i2c_bus_write_blocking(struct i2c_bus *bus, uint8_t addr, const uint8_t *src
 
 	ret = i2c_write_blocking(bus->i2c, addr, src, len, false);
 	if (ret != len) {
-		log_printf(&util_logger, "i2c_bus_write 0x%02x: %d %d", addr, len, ret);
+		DEBUG_PRINTF("i2c_bus_write 0x%02x: %d %d", addr, len, ret);
 	}
 
 	mutex_exit(&bus->lock);
