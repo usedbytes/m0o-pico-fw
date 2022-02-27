@@ -16,6 +16,20 @@
 #include "scheduler.h"
 #include "util.h"
 
+#define I2C_BUS      i2c0
+#define I2C_PIN_SDA  0
+#define I2C_PIN_SCL  1
+
+static inline int __i2c_write_blocking(void *i2c_handle, uint8_t addr, const uint8_t *src, size_t len)
+{
+	return i2c_bus_write_blocking((struct i2c_bus *)i2c_handle, addr, src, len);
+}
+
+static inline int __i2c_read_blocking(void *i2c_handle, uint8_t addr, uint8_t *dst, size_t len)
+{
+	return i2c_bus_read_blocking((struct i2c_bus *)i2c_handle, addr, dst, len);
+}
+
 // This list is ordered to try and put the most frequent messages near the start
 const struct comm_command *const cmds[] = {
 	&util_sync_cmd,
@@ -149,6 +163,8 @@ int64_t scheduler_kick_cb(alarm_id_t id, void *user_data)
 struct {
 	queue_t command_queue;
 } core1_thread_state;
+
+struct i2c_bus i2c;
 
 enum scheduler_command {
 	// "value" must be a pointer to struct task
@@ -337,6 +353,12 @@ int main()
 
 	util_init();
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
+
+        i2c_bus_init(&i2c, I2C_BUS, 100000);
+        gpio_set_function(I2C_PIN_SDA, GPIO_FUNC_I2C);
+        gpio_set_function(I2C_PIN_SCL, GPIO_FUNC_I2C);
+        gpio_pull_up(I2C_PIN_SDA);
+        gpio_pull_up(I2C_PIN_SCL);
 
 	queue_init(cmdq, sizeof(struct command_list *), 5);
 	multicore_launch_core1(core1_main);
