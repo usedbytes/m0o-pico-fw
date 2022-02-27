@@ -11,11 +11,15 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 
-#include "camera_task.h"
 #include "comm.h"
 #include "log.h"
 #include "scheduler.h"
 #include "util.h"
+
+#include "camera_task.h"
+#include "heading_task.h"
+
+#define BNO055_ADDR 0x28
 
 #define CAMERA_PIN_D0        16
 #define CAMERA_GPIO_XCLK     21
@@ -354,6 +358,21 @@ task_id_t register_task(queue_t *cmdq, struct task *task)
 	return cmd_list.commands[0].result;
 }
 
+struct camera_task camera_task;
+struct camera_platform_config camera_platform = {
+	.i2c_write_blocking = __i2c_write_blocking,
+	.i2c_read_blocking = __i2c_read_blocking,
+	.i2c_handle = &i2c,
+
+	.pio = CAMERA_PIO,
+	.xclk_pin = CAMERA_GPIO_XCLK,
+	.xclk_divider = 9,
+	.base_pin = CAMERA_PIN_D0,
+	.base_dma_channel = -1,
+};
+
+struct heading_task heading_task;
+
 int main()
 {
 	queue_t *cmdq = &core1_thread_state.command_queue;
@@ -376,22 +395,19 @@ int main()
 	blink_task_init(&blink_task, PICO_DEFAULT_LED_PIN, 300);
 
 	struct camera_task camera_task;
-	struct camera_platform_config camera_platform = {
-		.i2c_write_blocking = __i2c_write_blocking,
-		.i2c_read_blocking = __i2c_read_blocking,
-		.i2c_handle = &i2c,
-
-		.pio = CAMERA_PIO,
-		.xclk_pin = CAMERA_GPIO_XCLK,
-		.xclk_divider = 9,
-		.base_pin = CAMERA_PIN_D0,
-		.base_dma_channel = -1,
-	};
 
 	task_id_t camera_task_id = 0;
 	int ret = camera_task_init(&camera_task, &camera_platform);
 	if (ret == 0) {
 		camera_task_id = register_task(cmdq, &camera_task.task);
+	}
+
+	task_id_t heading_task_id = 0;
+	ret = heading_task_init(&heading_task, &i2c, BNO055_ADDR, 10000);
+	if (ret) {
+		log_printf(&util_logger, "heading_task_init failed: %d", ret);
+	} else {
+		heading_task_id = register_task(cmdq, &heading_task.task);
 	}
 
 	struct count_task counters[3];
@@ -420,14 +436,24 @@ int main()
 
 	struct command *cmd = command_list_alloc_commands(cmd_list, 1);
 
+	struct heading_reading heading;
+
 	while (1) {
 		cmd->target = blink_task_id;
 		cmd->prop = BLINK_TASK_PERIOD;
 		cmd->value = 200;
+
+		if (heading_task_id != 0) {
+			command_list_write_command(cmd_list, heading_task_id, HEADING_TASK_GET_HEADING, (uint32_t)&heading);
+		}
 		command_list_submit_blocking(cmd_list, cmdq);
 
 		sleep_ms(2000);
 		command_list_wait_for_completion(cmd_list);
+
+		if (heading_task_id != 0) {
+			log_printf(&util_logger, "Heading @%"PRIu64": %3.2f", heading.timestamp, heading.heading / 16.0);
+		}
 
 		cmd->target = blink_task_id;
 		cmd->prop = BLINK_TASK_PERIOD;
