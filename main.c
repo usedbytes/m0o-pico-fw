@@ -85,6 +85,20 @@ struct command *command_list_alloc_commands(struct command_list *cmd_list, uint1
 	return ret;
 }
 
+uint8_t *command_list_write_command(struct command_list *cmd_list, task_id_t target, uint16_t prop, uint32_t value)
+{
+	struct command *cmd = command_list_alloc_commands(cmd_list, 1);
+	if (!cmd) {
+		return NULL;
+	}
+
+	cmd->target = target;
+	cmd->prop = prop;
+	cmd->value = value;
+
+	return &cmd->result;
+}
+
 void command_list_submit_blocking(struct command_list *cmd_list, queue_t *to)
 {
 	assert(cmd_list->pending == cmd_list->complete);
@@ -293,6 +307,28 @@ void count_task_init(struct count_task *task, uint count, uint increment, uint o
 		.on_register = count_on_register,
 		.on_tick = count_on_tick,
 	};
+}
+
+task_id_t register_task(queue_t *cmdq, struct task *task)
+{
+	static struct command_list cmd_list = {
+		.n_cmds = 1,
+		.capacity = 1,
+		.commands = {
+			{
+				.target = 0,
+				.prop = SCHEDULER_TASK_REGISTER,
+			},
+		},
+	};
+
+	cmd_list.commands[0].result = 0;
+	cmd_list.commands[0].value = (uint32_t)task;
+
+	command_list_submit_blocking(&cmd_list, cmdq);
+	command_list_wait_for_completion(&cmd_list);
+
+	return cmd_list.commands[0].result;
 }
 
 int main()
