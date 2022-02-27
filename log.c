@@ -17,7 +17,8 @@ struct log_message {
 
 void log_init(struct log_buffer *log)
 {
-	critical_section_init(&log->lock);
+	int lock_num = spin_lock_claim_unused(true);
+	critical_section_init_with_lock_num(&log->lock, lock_num);
 	memset(log->buf, 0, sizeof(log->buf));
 	log->space = sizeof(log->buf);
 	log->insert_idx = 0;
@@ -96,7 +97,7 @@ static inline void __log_make_space(struct log_buffer *log, uint32_t at_least)
 	}
 }
 
-void log_write(struct log_buffer *log, const char *message, uint16_t len)
+void __log_write(struct log_buffer *log, const char *message, uint16_t len)
 {
 	uint32_t space_reqd = sizeof(struct log_message) + len;
 
@@ -104,8 +105,6 @@ void log_write(struct log_buffer *log, const char *message, uint16_t len)
 	if ((space_reqd > UINT16_MAX) || space_reqd >= sizeof(log->buf)) {
 		return;
 	}
-
-	critical_section_enter_blocking(&log->lock);
 
 	__log_make_space(log, space_reqd);
 
@@ -116,12 +115,21 @@ void log_write(struct log_buffer *log, const char *message, uint16_t len)
 
 	__log_write_bytes(log, (const uint8_t *)&msg, sizeof(msg));
 	__log_write_bytes(log, (const uint8_t *)message, len);
+}
+
+void log_write(struct log_buffer *log, const char *message, uint16_t len)
+{
+	critical_section_enter_blocking(&log->lock);
+
+	__log_write(log, message, len);
 
 	critical_section_exit(&log->lock);
 }
 
 int log_printf(struct log_buffer *log, const char *fmt, ...)
 {
+	critical_section_enter_blocking(&log->lock);
+
 	static char buf[256];
 	va_list args;
 	int ret;
@@ -130,7 +138,9 @@ int log_printf(struct log_buffer *log, const char *fmt, ...)
 	ret = vsnprintf(buf, sizeof(buf), fmt, args);
 	va_end(args);
 
-	log_write(log, buf, ret);
+	__log_write(log, buf, ret);
+
+	critical_section_exit(&log->lock);
 
 	return ret;
 }
