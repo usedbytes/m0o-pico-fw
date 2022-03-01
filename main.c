@@ -11,6 +11,7 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 
+#include "boom.h"
 #include "comm.h"
 #include "input.h"
 #include "log.h"
@@ -104,6 +105,8 @@ int main()
 	util_init();
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
+	boom_init();
+
 	// Start platform thread
 	multicore_launch_core1(core1_main);
 	platform_status = multicore_fifo_pop_blocking();
@@ -114,7 +117,7 @@ int main()
 	struct input_event ev;
 
 
-	add_alarm_in_us(100000, __timer_dummy_event_cb, 0, false);
+	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
 
 	while (1) {
 		input_get_event_blocking(&ev);
@@ -123,8 +126,8 @@ int main()
 				continue;
 			}
 
-			log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
-			           ev.lx, ev.ly, ev.rx, ev.ry, ev.hat, ev.btn_down, ev.btn_up);
+			//log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
+			//           ev.lx, ev.ly, ev.rx, ev.ry, ev.hat, ev.btn_down, ev.btn_up);
 
 			if (ev.btn_down) {
 				gpio_put(PICO_DEFAULT_LED_PIN, 1);
@@ -135,12 +138,36 @@ int main()
 			int8_t linear = clamp8(-ev.ly);
 			int8_t rot = clamp8(-ev.rx);
 			platform_set_velocity(platform, linear, rot);
+
+			if (ev.hat == 0) {
+				boom_extend_set_raw(0);
+			}
+
+			if (ev.hat & HAT_RIGHT) {
+				boom_extend_set_protected(127);
+			}
+
+			if (ev.hat & HAT_LEFT) {
+				boom_extend_set_protected(-127);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_B)) {
+				log_printf(&util_logger, "Reset count");
+				boom_reset_count();
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_A)) {
+				log_printf(&util_logger, "count: %d", boom_update_count());
+			}
 		} while (input_try_get_event(&ev));
 
+		/*
 		struct heading_result heading;
 		get_heading(platform, &heading);
 		log_printf(&util_logger, "heading @%"PRIu64": %3.2f", heading.timestamp, heading.heading / 16.0);
+		*/
+		//log_printf(&util_logger, "count: %d", boom_update_count());
 
-		add_alarm_in_us(100000, __timer_dummy_event_cb, 0, false);
+		add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
 	}
 }

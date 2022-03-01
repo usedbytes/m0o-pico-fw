@@ -37,17 +37,22 @@ static inline uint8_t abs8(int8_t v) {
 	return v < 0 ? -v : v;
 }
 
-void slice_set(uint slice, int8_t value)
+void slice_set_with_brake(uint slice, int8_t value, bool brake)
 {
 	uint8_t mag = abs8(value);
 
 	if (value == 0) {
-		pwm_set_both_levels(slice, 0, 0);
+		pwm_set_both_levels(slice, brake ? PWM_MAX : 0, brake ? PWM_MAX : 0);
 	} else if (value < 0) {
 		pwm_set_both_levels(slice, PWM_MIN + mag, 0);
 	} else {
 		pwm_set_both_levels(slice, 0, PWM_MIN + mag);
 	}
+}
+
+void slice_set(uint slice, int8_t value)
+{
+	slice_set_with_brake(slice, value, false);
 }
 
 void chassis_set_raw(struct chassis *chassis, int8_t left, int8_t right)

@@ -13,6 +13,7 @@ pico_sdk_init()
 
 add_executable(rebound
 	bno055.c
+	boom.c
 	camera_task.c
 	chassis.c
 	comm.c
