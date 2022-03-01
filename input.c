@@ -119,3 +119,14 @@ bool input_try_get_event(struct input_event *event)
 {
 	return queue_try_remove(&input_queue, event);
 }
+
+void input_send_dummy_event()
+{
+	struct input_event ev = {
+		.flags = INPUT_FLAG_DUMMY,
+	};
+
+	if (!queue_try_add(&input_queue, &ev)) {
+		log_printf(&util_logger, "dummy input event dropped");
+	}
+}

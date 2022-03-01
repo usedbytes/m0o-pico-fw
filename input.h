@@ -23,10 +23,14 @@ struct input_event {
         int8_t ry;
 
 	uint8_t hat;
+#define INPUT_FLAG_DUMMY (1 << 0)
+	uint8_t flags;
 };
 
 void input_init();
 void input_get_event_blocking(struct input_event *event);
 bool input_try_get_event(struct input_event *event);
+
+void input_send_dummy_event();
 
 #endif /* __INPUT_H__ */

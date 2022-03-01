@@ -86,6 +86,12 @@ static int8_t clamp8(int16_t value) {
         return value;
 }
 
+static int64_t __timer_dummy_event_cb(alarm_id_t id, void *user_data) {
+	input_send_dummy_event();
+
+	return 0;
+}
+
 int main()
 {
 	struct platform *platform;
@@ -107,9 +113,16 @@ int main()
 
 	struct input_event ev;
 
+
+	add_alarm_in_us(100000, __timer_dummy_event_cb, 0, false);
+
 	while (1) {
 		input_get_event_blocking(&ev);
 		do {
+			if (ev.flags & INPUT_FLAG_DUMMY) {
+				continue;
+			}
+
 			log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
 			           ev.lx, ev.ly, ev.rx, ev.ry, ev.hat, ev.btn_down, ev.btn_up);
 
@@ -124,10 +137,10 @@ int main()
 			platform_set_velocity(platform, linear, rot);
 		} while (input_try_get_event(&ev));
 
-		/*
 		struct heading_result heading;
 		get_heading(platform, &heading);
 		log_printf(&util_logger, "heading @%"PRIu64": %3.2f", heading.timestamp, heading.heading / 16.0);
-		*/
+
+		add_alarm_in_us(100000, __timer_dummy_event_cb, 0, false);
 	}
 }
