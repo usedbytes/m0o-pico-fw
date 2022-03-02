@@ -127,6 +127,7 @@ int main()
 	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
 
 	uint8_t prev_hat = 0;
+	uint16_t btn_held = 0;
 	while (1) {
 		input_get_event_blocking(&ev);
 		do {
@@ -137,10 +138,17 @@ int main()
 			log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
 			           ev.lx, ev.ly, ev.rx, ev.ry, ev.hat, ev.btn_down, ev.btn_up);
 
+			btn_held |= ev.btn_down;
+			btn_held &= ~ev.btn_up;
+
 			if (ev.btn_down) {
 				gpio_put(PICO_DEFAULT_LED_PIN, 1);
 			} else {
 				gpio_put(PICO_DEFAULT_LED_PIN, 0);
+			}
+
+			if (ev.btn_up & (1 << BTN_BIT_SELECT)) {
+				util_reboot(btn_held & (1 << BTN_BIT_START));
 			}
 
 			int8_t linear = clamp8(-ev.ly);

@@ -111,6 +111,11 @@ static void do_reboot(bool to_bootloader)
 	}
 }
 
+void util_reboot(bool to_bootloader)
+{
+	do_reboot(to_bootloader);
+}
+
 static uint32_t size_reboot(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
 {
 	*data_len_out = 0;

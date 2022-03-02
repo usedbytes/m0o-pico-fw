@@ -22,6 +22,7 @@ extern const struct comm_command util_read_cmd;
 extern struct log_buffer util_logger;
 
 void util_init(void);
+void util_reboot(bool to_bootloader);
 
 static inline int8_t clamp8(int16_t value) {
         if (value > 127) {
