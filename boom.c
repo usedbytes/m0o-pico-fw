@@ -46,11 +46,16 @@ static inline bool __extend_limit_pressed()
 	return gpio_get(BOOM_EXTEND_LIMIT_PIN);
 }
 
+bool boom_extend_at_limit()
+{
+	return __extend_limit_pressed();
+}
+
 void boom_handle_extend_limit(uint32_t events)
 {
 	if ((events & GPIO_IRQ_EDGE_RISE) && __extend_limit_pressed() && __is_retracting(boom.extend.raw_val)) {
 		// Stop!
-		boom_extend_set_protected(0);
+		boom_extend_set(0);
 	}
 }
 
@@ -77,7 +82,7 @@ void boom_gpio_irq_cb(uint gpio, uint32_t events)
 // -1: Cooldown
 // 0: OK
 // 1: At limit
-int boom_extend_set_protected(int8_t val)
+int boom_extend_set(int8_t val)
 {
 	int8_t raw_val = clamp8(val * BOOM_EXTEND_EXTEND_DIR);
 

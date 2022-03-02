@@ -97,7 +97,7 @@ void print_count_func(absolute_time_t scheduled, void *data)
 void boom_set_func(absolute_time_t scheduled, void *data)
 {
 	int8_t *val = data;
-	boom_extend_set_protected(*val);
+	boom_extend_set(*val);
 }
 
 int main()

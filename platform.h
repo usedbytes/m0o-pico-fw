@@ -41,6 +41,16 @@ struct platform_alarm_slot {
 	struct platform_message msg;
 };
 
+enum boom_extend_state {
+	BOOM_EXTEND_HOME_START = 1,
+	BOOM_EXTEND_HOME_EXTENDING,
+	BOOM_EXTEND_HOME_RETRACTING,
+	BOOM_EXTEND_HOME_STOPPED,
+	// Order is important
+	BOOM_EXTEND_HOME_DONE,
+	BOOM_EXTEND_HOME_ERROR,
+};
+
 struct platform {
 	queue_t queue;
 
@@ -59,6 +69,8 @@ struct platform {
 	absolute_time_t heading_timestamp;
 	uint32_t heading_update_us;
 	int16_t heading;
+
+	enum boom_extend_state boom_extend_state;
 };
 
 int platform_init(struct platform *platform);

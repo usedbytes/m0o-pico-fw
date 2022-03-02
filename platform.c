@@ -10,6 +10,7 @@
 #include "hardware/i2c.h"
 #include "pico/sync.h"
 
+#include "boom.h"
 #include "log.h"
 #include "platform.h"
 #include "util.h"
@@ -156,6 +157,53 @@ static void platform_update_heading(absolute_time_t scheduled, void *data)
 	}
 }
 
+static void platform_boom_extend_home(absolute_time_t scheduled, void *data)
+{
+	const int8_t home_speed = 90;
+	const uint32_t poll_us = 100000;
+	const uint32_t max_extend = 2000;
+	struct platform *platform = data;
+
+	switch (platform->boom_extend_state) {
+	case BOOM_EXTEND_HOME_START:
+		boom_reset_count();
+		boom_extend_set(home_speed);
+		platform->boom_extend_state = BOOM_EXTEND_HOME_EXTENDING;
+		break;
+	case BOOM_EXTEND_HOME_EXTENDING:
+		if (!boom_extend_at_limit()) {
+			if (boom_extend_set(-home_speed) == 0) {
+				platform->boom_extend_state = BOOM_EXTEND_HOME_RETRACTING;
+			}
+		} else if (boom_update_count() >= max_extend) {
+			// Guard for if the switch is broken, so we don't plough
+			// into the far end
+			boom_extend_set(0);
+			platform->boom_extend_state = BOOM_EXTEND_HOME_ERROR;
+			log_printf(&util_logger, "boom homing failed");
+		}
+		break;
+	case BOOM_EXTEND_HOME_RETRACTING:
+		if (boom_extend_at_limit()) {
+			boom_extend_set(0);
+			platform->boom_extend_state = BOOM_EXTEND_HOME_STOPPED;
+		}
+		break;
+	case BOOM_EXTEND_HOME_STOPPED:
+		if (boom_extend_set(0) == 0) {
+			boom_reset_count();
+			platform->boom_extend_state = BOOM_EXTEND_HOME_DONE;
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (platform->boom_extend_state < BOOM_EXTEND_HOME_DONE) {
+		platform_schedule_function(platform, platform_boom_extend_home, platform, scheduled + poll_us);
+	}
+}
+
 int platform_init(struct platform *platform /*, platform_config*/)
 {
 	int ret = 0;
@@ -189,11 +237,19 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	return ret;
 }
 
+static void platform_start_boom_homing(struct platform *platform)
+{
+	platform->boom_extend_state = BOOM_EXTEND_HOME_START;
+	platform_schedule_function(platform, platform_boom_extend_home, platform, get_absolute_time() + 1000000);
+}
+
 void platform_run(struct platform *platform) {
 	// Kick off heading updates
 	if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
 		platform_update_heading(get_absolute_time(), platform);
 	}
+
+	platform_start_boom_homing(platform);
 
 	while (1) {
 		struct platform_message msg;

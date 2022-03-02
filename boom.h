@@ -8,7 +8,8 @@
 
 #include <stdint.h>
 
-int boom_extend_set_protected(int8_t val);
+int boom_extend_set(int8_t val);
+bool boom_extend_at_limit();
 
 void boom_init();
 
