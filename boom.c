@@ -9,6 +9,7 @@
 
 #include "boom.h"
 #include "chassis.h"
+#include "util.h"
 
 #define BOOM_EXTEND_MOTOR_A_PIN  8
 #define BOOM_EXTEND_MOTOR_B_PIN  9
@@ -27,17 +28,17 @@ struct boom {
 	struct {
 		uint motor_slice;
 		uint encoder_slice;
-		volatile int8_t val;
+		volatile int8_t raw_val;
 		bool cooldown;
 		uint32_t cooldown_ts;
-		uint16_t count;
+		int16_t count;
 		uint16_t last_count;
 	} extend;
 } boom;
 
-static inline bool __is_retracting(int8_t val)
+static inline bool __is_retracting(int8_t raw_val)
 {
-	return (val * BOOM_EXTEND_RETRACT_DIR) > 0;
+	return (raw_val * BOOM_EXTEND_RETRACT_DIR) > 0;
 }
 
 static inline bool __extend_limit_pressed()
@@ -47,7 +48,7 @@ static inline bool __extend_limit_pressed()
 
 void boom_handle_extend_limit(uint32_t events)
 {
-	if ((events & GPIO_IRQ_EDGE_RISE) && __extend_limit_pressed() && __is_retracting(boom.extend.val)) {
+	if ((events & GPIO_IRQ_EDGE_RISE) && __extend_limit_pressed() && __is_retracting(boom.extend.raw_val)) {
 		// Stop!
 		boom_extend_set_protected(0);
 	}
@@ -78,6 +79,8 @@ void boom_gpio_irq_cb(uint gpio, uint32_t events)
 // 1: At limit
 int boom_extend_set_protected(int8_t val)
 {
+	int8_t raw_val = clamp8(val * BOOM_EXTEND_EXTEND_DIR);
+
 	if (boom.extend.cooldown) {
 		// If still cooling down, early-out
 		uint32_t t = time_us_32();
@@ -88,15 +91,15 @@ int boom_extend_set_protected(int8_t val)
 		// Otherwise, cooldown is finished
 		boom_update_count();
 		boom.extend.cooldown = false;
-		boom.extend.val = 0;
+		boom.extend.raw_val = 0;
 	}
 
 	// If we're crossing zero, then first stop completely.
-	// Keep the current extend.val value until cooldown is complete, so
+	// Keep the current extend.raw_val value until cooldown is complete, so
 	// any calls to boom_update_count() use the right direction.
-	if (((boom.extend.val < 0) && (val > 0)) ||
-	    ((boom.extend.val > 0) && (val < 0)) ||
-	    ((boom.extend.val != 0) && (val == 0))) {
+	if (((boom.extend.raw_val < 0) && (raw_val > 0)) ||
+	    ((boom.extend.raw_val > 0) && (raw_val < 0)) ||
+	    ((boom.extend.raw_val != 0) && (raw_val == 0))) {
 		boom.extend.cooldown = true;
 		boom.extend.cooldown_ts = time_us_32();
 		slice_set_with_brake(boom.extend.motor_slice, 0, true);
@@ -104,11 +107,12 @@ int boom_extend_set_protected(int8_t val)
 	}
 
 	// If we're at the limit and trying to retract, that's a no.
-	if (__is_retracting(val) && __extend_limit_pressed()) {
+	if (__is_retracting(raw_val) && __extend_limit_pressed()) {
 		return 1;
 	}
 
-	boom_extend_set_raw(val);
+	boom.extend.raw_val = raw_val;
+	slice_set_with_brake(boom.extend.motor_slice, raw_val, true);
 
 	return 0;
 }
@@ -119,25 +123,19 @@ void boom_reset_count()
 	boom.extend.count = 0;
 }
 
-uint16_t boom_update_count()
+int16_t boom_update_count()
 {
 	uint16_t count = pwm_get_counter(boom.extend.encoder_slice);
 	uint16_t diff = count - boom.extend.last_count;
 	boom.extend.last_count = count;
 
-	if (__is_retracting(boom.extend.val)) {
+	if (__is_retracting(boom.extend.raw_val)) {
 		boom.extend.count -= diff;
 	} else {
 		boom.extend.count += diff;
 	}
 
 	return boom.extend.count;
-}
-
-void boom_extend_set_raw(int8_t val)
-{
-	boom.extend.val = val;
-	slice_set_with_brake(boom.extend.motor_slice, val, true);
 }
 
 void boom_init()

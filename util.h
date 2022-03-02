@@ -23,4 +23,14 @@ extern struct log_buffer util_logger;
 
 void util_init(void);
 
+static inline int8_t clamp8(int16_t value) {
+        if (value > 127) {
+                return 127;
+        } else if (value < -128) {
+                return -128;
+        }
+
+        return value;
+}
+
 #endif /* __UTIL_H__ */

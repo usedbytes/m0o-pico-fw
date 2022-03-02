@@ -77,16 +77,6 @@ static void get_heading(struct platform *platform, struct heading_result *out)
 	while (!closure.done);
 }
 
-static int8_t clamp8(int16_t value) {
-        if (value > 127) {
-                return 127;
-        } else if (value < -128) {
-                return -128;
-        }
-
-        return value;
-}
-
 static int64_t __timer_dummy_event_cb(alarm_id_t id, void *user_data) {
 	input_send_dummy_event();
 
