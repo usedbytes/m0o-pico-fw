@@ -16,17 +16,23 @@
 #define BOOM_EXTEND_ENC_PIN     11
 #define BOOM_EXTEND_RETRACT_DIR  1
 #define BOOM_EXTEND_EXTEND_DIR  -1
+// 100ms cooldown when changing direction, to wait for motor to stop
+#define BOOM_EXTEND_COOLDOWN_US 100000
 
 #define BOOM_LIFT_MOTOR_A_PIN    6
 #define BOOM_LIFT_MOTOR_B_PIN    7
 #define BOOM_LIFT_LIMIT_PIN     22
 
 struct boom {
-	uint extend_motor_slice;
-	uint extend_encoder_slice;
-	volatile int8_t extend_val;
-	uint16_t extend_count;
-	uint16_t last_count;
+	struct {
+		uint motor_slice;
+		uint encoder_slice;
+		volatile int8_t val;
+		bool cooldown;
+		uint32_t cooldown_ts;
+		uint16_t count;
+		uint16_t last_count;
+	} extend;
 } boom;
 
 static inline bool __is_retracting(int8_t val)
@@ -41,9 +47,9 @@ static inline bool __extend_limit_pressed()
 
 void boom_handle_extend_limit(uint32_t events)
 {
-	if ((events & GPIO_IRQ_EDGE_RISE) && __extend_limit_pressed() && __is_retracting(boom.extend_val)) {
+	if ((events & GPIO_IRQ_EDGE_RISE) && __extend_limit_pressed() && __is_retracting(boom.extend.val)) {
 		// Stop!
-		boom_extend_set_raw(0);
+		boom_extend_set_protected(0);
 	}
 }
 
@@ -66,52 +72,72 @@ void boom_gpio_irq_cb(uint gpio, uint32_t events)
 	gpio_acknowledge_irq(gpio, events);
 }
 
-void boom_extend_set_protected(int8_t val)
+// Returns:
+// -1: Cooldown
+// 0: OK
+// 1: At limit
+int boom_extend_set_protected(int8_t val)
 {
+	if (boom.extend.cooldown) {
+		// If still cooling down, early-out
+		uint32_t t = time_us_32();
+		if ((t - boom.extend.cooldown_ts) < BOOM_EXTEND_COOLDOWN_US) {
+			return -1;
+		}
+
+		// Otherwise, cooldown is finished
+		boom_update_count();
+		boom.extend.cooldown = false;
+		boom.extend.val = 0;
+	}
+
+	// If we're crossing zero, then first stop completely.
+	// Keep the current extend.val value until cooldown is complete, so
+	// any calls to boom_update_count() use the right direction.
+	if (((boom.extend.val < 0) && (val > 0)) ||
+	    ((boom.extend.val > 0) && (val < 0)) ||
+	    ((boom.extend.val != 0) && (val == 0))) {
+		boom.extend.cooldown = true;
+		boom.extend.cooldown_ts = time_us_32();
+		slice_set_with_brake(boom.extend.motor_slice, 0, true);
+		return -1;
+	}
+
+	// If we're at the limit and trying to retract, that's a no.
 	if (__is_retracting(val) && __extend_limit_pressed()) {
-		return;
+		return 1;
 	}
 
 	boom_extend_set_raw(val);
+
+	return 0;
 }
 
 void boom_reset_count()
 {
-	boom.extend_count = 0;
-	boom.last_count = 0;
+	boom_update_count();
+	boom.extend.count = 0;
 }
 
 uint16_t boom_update_count()
 {
-	uint16_t count = pwm_get_counter(boom.extend_encoder_slice);
-	uint16_t diff = count - boom.last_count;
-	boom.last_count = count;
+	uint16_t count = pwm_get_counter(boom.extend.encoder_slice);
+	uint16_t diff = count - boom.extend.last_count;
+	boom.extend.last_count = count;
 
-	if (__is_retracting(boom.extend_val)) {
-		boom.extend_count -= diff;
+	if (__is_retracting(boom.extend.val)) {
+		boom.extend.count -= diff;
 	} else {
-		boom.extend_count += diff;
+		boom.extend.count += diff;
 	}
 
-	return boom.extend_count;
+	return boom.extend.count;
 }
 
 void boom_extend_set_raw(int8_t val)
 {
-	// Stop first and reset counter if changing direction or stopping
-	if (((boom.extend_val < 0) && (val > 0)) ||
-	    ((boom.extend_val > 0) && (val < 0)) ||
-	    (val == 0)) {
-		slice_set_with_brake(boom.extend_motor_slice, 0, true);
-		sleep_us(1000);
-
-		boom_update_count();
-		pwm_set_counter(boom.extend_encoder_slice, 0);
-		boom.last_count = 0;
-	}
-
-	boom.extend_val = val;
-	slice_set_with_brake(boom.extend_motor_slice, val, true);
+	boom.extend.val = val;
+	slice_set_with_brake(boom.extend.motor_slice, val, true);
 }
 
 void boom_init()
@@ -120,15 +146,15 @@ void boom_init()
 	gpio_set_pulls(BOOM_EXTEND_LIMIT_PIN, true, false);
 	gpio_set_irq_enabled_with_callback(BOOM_EXTEND_LIMIT_PIN, GPIO_IRQ_EDGE_RISE, true, boom_gpio_irq_cb);
 
-	boom.extend_motor_slice = pwm_gpio_to_slice_num(BOOM_EXTEND_MOTOR_A_PIN);
-	boom.extend_encoder_slice = pwm_gpio_to_slice_num(BOOM_EXTEND_ENC_PIN);
+	boom.extend.motor_slice = pwm_gpio_to_slice_num(BOOM_EXTEND_MOTOR_A_PIN);
+	boom.extend.encoder_slice = pwm_gpio_to_slice_num(BOOM_EXTEND_ENC_PIN);
 
-	init_slice(boom.extend_motor_slice, BOOM_EXTEND_MOTOR_A_PIN);
+	init_slice(boom.extend.motor_slice, BOOM_EXTEND_MOTOR_A_PIN);
 
 	gpio_set_function(BOOM_EXTEND_ENC_PIN, GPIO_FUNC_PWM);
 	pwm_config c = pwm_get_default_config();
 	pwm_config_set_clkdiv_mode(&c, PWM_DIV_B_RISING);
-	pwm_init(boom.extend_encoder_slice, &c, true);
+	pwm_init(boom.extend.encoder_slice, &c, true);
 
 	gpio_init(BOOM_LIFT_LIMIT_PIN);
 	gpio_set_pulls(BOOM_LIFT_LIMIT_PIN, true, false);

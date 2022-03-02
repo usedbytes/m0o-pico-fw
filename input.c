@@ -14,6 +14,7 @@
 #include "util.h"
 
 #define CMD_INPUT    (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
+#define INPUT_QUEUE_LENGTH 32
 
 const uint8_t hat_pos_to_dirs[] = {
 	[0] = HAT_UP,
@@ -88,7 +89,7 @@ const struct comm_command input_cmd = {
 
 void input_init()
 {
-	queue_init(&input_queue, sizeof(struct input_event), 8);
+	queue_init(&input_queue, sizeof(struct input_event), INPUT_QUEUE_LENGTH);
 }
 
 void input_get_event_blocking(struct input_event *event)

@@ -93,6 +93,23 @@ static int64_t __timer_dummy_event_cb(alarm_id_t id, void *user_data) {
 	return 0;
 }
 
+void reset_count_func(absolute_time_t scheduled, void *data)
+{
+	log_printf(&util_logger, "Reset count");
+	boom_reset_count();
+}
+
+void print_count_func(absolute_time_t scheduled, void *data)
+{
+	log_printf(&util_logger, "count: %d", boom_update_count());
+}
+
+void boom_set_func(absolute_time_t scheduled, void *data)
+{
+	int8_t *val = data;
+	boom_extend_set_protected(*val);
+}
+
 int main()
 {
 	struct platform *platform;
@@ -119,6 +136,7 @@ int main()
 
 	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
 
+	uint8_t prev_hat = 0;
 	while (1) {
 		input_get_event_blocking(&ev);
 		do {
@@ -126,8 +144,8 @@ int main()
 				continue;
 			}
 
-			//log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
-			//           ev.lx, ev.ly, ev.rx, ev.ry, ev.hat, ev.btn_down, ev.btn_up);
+			log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
+			           ev.lx, ev.ly, ev.rx, ev.ry, ev.hat, ev.btn_down, ev.btn_up);
 
 			if (ev.btn_down) {
 				gpio_put(PICO_DEFAULT_LED_PIN, 1);
@@ -139,26 +157,32 @@ int main()
 			int8_t rot = clamp8(-ev.rx);
 			platform_set_velocity(platform, linear, rot);
 
-			if (ev.hat == 0) {
-				boom_extend_set_raw(0);
+			int8_t extend_val;
+
+			if (ev.hat == 0 && prev_hat != 0) {
+				extend_val = 0;
+				platform_run_function(platform, boom_set_func, &extend_val);
 			}
 
-			if (ev.hat & HAT_RIGHT) {
-				boom_extend_set_protected(127);
+			if (ev.hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
+				extend_val = 127;
+				platform_run_function(platform, boom_set_func, &extend_val);
 			}
 
-			if (ev.hat & HAT_LEFT) {
-				boom_extend_set_protected(-127);
+			if (ev.hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
+				extend_val = -127;
+				platform_run_function(platform, boom_set_func, &extend_val);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_B)) {
-				log_printf(&util_logger, "Reset count");
-				boom_reset_count();
+				platform_run_function(platform, reset_count_func, NULL);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_A)) {
-				log_printf(&util_logger, "count: %d", boom_update_count());
+				platform_run_function(platform, print_count_func, NULL);
 			}
+
+			prev_hat = ev.hat;
 		} while (input_try_get_event(&ev));
 
 		/*
