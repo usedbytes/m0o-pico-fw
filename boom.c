@@ -9,6 +9,8 @@
 
 #include "boom.h"
 #include "chassis.h"
+#include "i2c_bus.h"
+#include "log.h"
 #include "util.h"
 
 #define BOOM_EXTEND_MOTOR_A_PIN  8
@@ -23,6 +25,10 @@
 #define BOOM_LIFT_MOTOR_A_PIN    6
 #define BOOM_LIFT_MOTOR_B_PIN    7
 #define BOOM_LIFT_LIMIT_PIN     22
+#define BOOM_LIFT_RAISE_DIR      1
+#define BOOM_LIFT_LOWER_DIR     -1
+
+#define AS5600_ADDR 0x36
 
 struct boom {
 	struct {
@@ -34,6 +40,12 @@ struct boom {
 		int16_t count;
 		uint16_t last_count;
 	} extend;
+	struct {
+		uint motor_slice;
+		struct i2c_bus *i2c;
+		int16_t zero_angle;
+		volatile int8_t raw_val;
+	} lift;
 } boom;
 
 static inline bool __is_retracting(int8_t raw_val)
@@ -59,9 +71,27 @@ void boom_handle_extend_limit(uint32_t events)
 	}
 }
 
+static inline bool __is_lowering(int8_t raw_val)
+{
+	return (raw_val * BOOM_LIFT_LOWER_DIR) > 0;
+}
+
+static inline bool __lift_limit_pressed()
+{
+	return gpio_get(BOOM_LIFT_LIMIT_PIN);
+}
+
+bool boom_lift_at_limit()
+{
+	return __lift_limit_pressed();
+}
+
 void boom_handle_lift_limit(uint32_t events)
 {
-
+	if ((events & GPIO_IRQ_EDGE_RISE) && __lift_limit_pressed() && __is_lowering(boom.lift.raw_val)) {
+		// Stop!
+		boom_lift_set(0);
+	}
 }
 
 void boom_gpio_irq_cb(uint gpio, uint32_t events)
@@ -143,7 +173,69 @@ int16_t boom_update_count()
 	return boom.extend.count;
 }
 
-void boom_init()
+uint16_t __lift_get_angle_raw()
+{
+	uint8_t buf[2];
+
+	int ret = i2c_bus_write_blocking(boom.lift.i2c, AS5600_ADDR, (uint8_t[]){ 0x0C }, 1);
+	if (ret != 1) {
+		log_printf(&util_logger, "write error: %d\n", ret);
+		return 0x8000;
+	}
+
+	ret = i2c_bus_read_blocking(boom.lift.i2c, AS5600_ADDR, buf, 2);
+	if (ret != 2) {
+		log_printf(&util_logger, "read error: %d\n", ret);
+		return 0x8000;
+	}
+
+	return buf[0] << 8 | buf[1];
+}
+
+int boom_lift_get_angle(int16_t *angle)
+{
+	uint16_t raw_angle = __lift_get_angle_raw();
+	if (raw_angle & 0x8000) {
+		return -1;
+	}
+
+	*angle = (int16_t)raw_angle - boom.lift.zero_angle;
+
+	return 0;
+}
+
+int boom_lift_reset_angle()
+{
+	uint16_t raw_angle = __lift_get_angle_raw();
+	if (raw_angle & 0x8000) {
+		return -1;
+	}
+
+	boom.lift.zero_angle = raw_angle;
+
+	return 0;
+}
+
+// Returns:
+// -1: Cooldown
+// 0: OK
+// 1: At limit
+int boom_lift_set(int8_t val)
+{
+	int8_t raw_val = clamp8(val * BOOM_LIFT_RAISE_DIR);
+
+	// If we're at the limit and trying to lower, that's a no.
+	if (__is_lowering(raw_val) && __lift_limit_pressed()) {
+		return 1;
+	}
+
+	boom.lift.raw_val = raw_val;
+	slice_set_with_brake(boom.lift.motor_slice, raw_val, true);
+
+	return 0;
+}
+
+void boom_init(struct i2c_bus *i2c)
 {
 	gpio_init(BOOM_EXTEND_LIMIT_PIN);
 	gpio_set_pulls(BOOM_EXTEND_LIMIT_PIN, true, false);
@@ -161,4 +253,9 @@ void boom_init()
 
 	gpio_init(BOOM_LIFT_LIMIT_PIN);
 	gpio_set_pulls(BOOM_LIFT_LIMIT_PIN, true, false);
+	gpio_set_irq_enabled(BOOM_LIFT_LIMIT_PIN, GPIO_IRQ_EDGE_RISE, true);
+
+	boom.lift.i2c = i2c;
+	boom.lift.motor_slice = pwm_gpio_to_slice_num(BOOM_LIFT_MOTOR_A_PIN);
+	init_slice(boom.lift.motor_slice, BOOM_LIFT_MOTOR_A_PIN);
 }

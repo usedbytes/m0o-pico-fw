@@ -29,6 +29,10 @@
 #define I2C_MAIN_PIN_SDA  0
 #define I2C_MAIN_PIN_SCL  1
 
+#define I2C_AUX_BUS       i2c1
+#define I2C_AUX_PIN_SDA   2
+#define I2C_AUX_PIN_SCL   3
+
 static struct platform_alarm_slot *__find_free_alarm_slot(struct platform *platform)
 {
 	int i;
@@ -226,6 +230,14 @@ int platform_init(struct platform *platform /*, platform_config*/)
         gpio_set_function(I2C_MAIN_PIN_SCL, GPIO_FUNC_I2C);
         gpio_pull_up(I2C_MAIN_PIN_SDA);
         gpio_pull_up(I2C_MAIN_PIN_SCL);
+
+        i2c_bus_init(&platform->i2c_aux, I2C_AUX_BUS, 100000);
+        gpio_set_function(I2C_AUX_PIN_SDA, GPIO_FUNC_I2C);
+        gpio_set_function(I2C_AUX_PIN_SCL, GPIO_FUNC_I2C);
+        gpio_pull_up(I2C_AUX_PIN_SDA);
+        gpio_pull_up(I2C_AUX_PIN_SCL);
+
+	boom_init(&platform->i2c_aux);
 
 	chassis_init(&platform->chassis, CHASSIS_PIN_L_A, CHASSIS_PIN_R_A);
 

@@ -66,6 +66,8 @@ struct platform {
 	struct bno055 bno055;
 	struct chassis chassis;
 
+	struct i2c_bus i2c_aux;
+
 	absolute_time_t heading_timestamp;
 	uint32_t heading_update_us;
 	int16_t heading;

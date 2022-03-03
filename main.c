@@ -112,8 +112,6 @@ int main()
 	util_init();
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
-	boom_init();
-
 	// Start platform thread
 	multicore_launch_core1(core1_main);
 	platform_status = multicore_fifo_pop_blocking();
@@ -160,6 +158,7 @@ int main()
 			if (ev.hat == 0 && prev_hat != 0) {
 				extend_val = 0;
 				platform_run_function(platform, boom_set_func, &extend_val);
+				boom_lift_set(0);
 			}
 
 			if (ev.hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
@@ -172,12 +171,31 @@ int main()
 				platform_run_function(platform, boom_set_func, &extend_val);
 			}
 
+			if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
+				boom_lift_set(80);
+			}
+
+			if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
+				boom_lift_set(-80);
+			}
+
 			if (ev.btn_down & (1 << BTN_BIT_B)) {
 				platform_run_function(platform, reset_count_func, NULL);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_A)) {
 				platform_run_function(platform, print_count_func, NULL);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_X)) {
+				int16_t angle = 0;
+				int ret = boom_lift_get_angle(&angle);
+				log_printf(&util_logger, "Lift: %d, %d", ret, angle);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_Y)) {
+				int ret = boom_lift_reset_angle();
+				log_printf(&util_logger, "Reset: %d", ret);
 			}
 
 			prev_hat = ev.hat;
