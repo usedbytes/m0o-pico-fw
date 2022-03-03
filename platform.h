@@ -51,6 +51,16 @@ enum boom_extend_state {
 	BOOM_EXTEND_HOME_ERROR,
 };
 
+enum boom_lift_state {
+	BOOM_LIFT_HOME_START = 1,
+	BOOM_LIFT_HOME_RAISING,
+	BOOM_LIFT_HOME_LOWERING,
+	BOOM_LIFT_HOME_STOPPED,
+	// Order is important
+	BOOM_LIFT_HOME_DONE,
+	BOOM_LIFT_HOME_ERROR,
+};
+
 struct platform {
 	queue_t queue;
 
@@ -73,6 +83,7 @@ struct platform {
 	int16_t heading;
 
 	enum boom_extend_state boom_extend_state;
+	enum boom_lift_state boom_lift_state;
 };
 
 int platform_init(struct platform *platform);

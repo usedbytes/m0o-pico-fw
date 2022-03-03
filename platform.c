@@ -208,6 +208,62 @@ static void platform_boom_extend_home(absolute_time_t scheduled, void *data)
 	}
 }
 
+static void platform_boom_lift_home(absolute_time_t scheduled, void *data)
+{
+	const int8_t home_speed = 90;
+	const uint32_t poll_us = 100000;
+	const uint32_t max_lift = 20;
+	struct platform *platform = data;
+	int ret;
+
+	switch (platform->boom_lift_state) {
+	case BOOM_LIFT_HOME_START:
+		ret = boom_lift_reset_angle();
+		if (ret != 0) {
+			platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
+			break;
+		}
+		boom_lift_set(home_speed);
+		platform->boom_lift_state = BOOM_LIFT_HOME_RAISING;
+		break;
+	case BOOM_LIFT_HOME_RAISING:
+		if (!boom_lift_at_limit()) {
+			if (boom_lift_set(-home_speed) == 0) {
+				platform->boom_lift_state = BOOM_LIFT_HOME_LOWERING;
+			}
+		} else {
+			int16_t angle = 0;
+			ret = boom_lift_get_angle(&angle);
+			if (ret != 0) {
+				platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
+				break;
+			}
+
+			// Guard for if the switch is broken, so we don't plough
+			// into the far end
+			if (angle >= max_lift) {
+				boom_lift_set(0);
+				platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
+				log_printf(&util_logger, "boom lift homing failed");
+				break;
+			}
+		}
+		break;
+	case BOOM_LIFT_HOME_LOWERING:
+		if (boom_lift_at_limit()) {
+			boom_lift_set(0);
+			platform->boom_lift_state = BOOM_LIFT_HOME_DONE;
+		}
+		break;
+	default:
+		break;
+	}
+
+	if (platform->boom_lift_state < BOOM_LIFT_HOME_DONE) {
+		platform_schedule_function(platform, platform_boom_lift_home, platform, scheduled + poll_us);
+	}
+}
+
 int platform_init(struct platform *platform /*, platform_config*/)
 {
 	int ret = 0;
@@ -253,6 +309,8 @@ static void platform_start_boom_homing(struct platform *platform)
 {
 	platform->boom_extend_state = BOOM_EXTEND_HOME_START;
 	platform_schedule_function(platform, platform_boom_extend_home, platform, get_absolute_time() + 1000000);
+	platform->boom_lift_state = BOOM_LIFT_HOME_START;
+	platform_schedule_function(platform, platform_boom_lift_home, platform, get_absolute_time() + 1000000);
 }
 
 void platform_run(struct platform *platform) {
