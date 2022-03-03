@@ -13,14 +13,21 @@
 #include "log.h"
 #include "util.h"
 
-#define BOOM_EXTEND_MOTOR_A_PIN  8
-#define BOOM_EXTEND_MOTOR_B_PIN  9
-#define BOOM_EXTEND_LIMIT_PIN   10
-#define BOOM_EXTEND_ENC_PIN     11
-#define BOOM_EXTEND_RETRACT_DIR  1
-#define BOOM_EXTEND_EXTEND_DIR  -1
+#define BOOM_EXTEND_MOTOR_A_PIN    8
+#define BOOM_EXTEND_MOTOR_B_PIN    9
+#define BOOM_EXTEND_LIMIT_PIN     10
+#define BOOM_EXTEND_ENC_PIN       11
+#define BOOM_EXTEND_RETRACT_DIR    1
+#define BOOM_EXTEND_EXTEND_DIR    -1
 // 100ms cooldown when changing direction, to wait for motor to stop
-#define BOOM_EXTEND_COOLDOWN_US 100000
+#define BOOM_EXTEND_COOLDOWN_US   100000
+
+// count, abs mm, rel mm, counts/mm
+//     0,   44.2,      0,
+//  6796,   93.7,   49.5, 137.292929292929
+// 12887, 138.24,  94.04, 137.037430880476
+//  6131,     89,   44.8, 136.852678571429
+#define BOOM_EXTEND_COUNTS_PER_MM 137
 
 #define BOOM_LIFT_MOTOR_A_PIN    6
 #define BOOM_LIFT_MOTOR_B_PIN    7
