@@ -91,7 +91,9 @@ void reset_count_func(absolute_time_t scheduled, void *data)
 
 void print_count_func(absolute_time_t scheduled, void *data)
 {
-	log_printf(&util_logger, "count: %d", boom_update_count());
+	int16_t count = boom_update_count();
+	float mm = boom_extend_count_to_mm(count);
+	log_printf(&util_logger, "count: %d, %3.2f mm", count, mm);
 }
 
 void boom_set_func(absolute_time_t scheduled, void *data)
@@ -190,7 +192,7 @@ int main()
 			if (ev.btn_down & (1 << BTN_BIT_X)) {
 				int16_t angle = 0;
 				int ret = boom_lift_get_angle(&angle);
-				log_printf(&util_logger, "Lift: %d, %d", ret, angle);
+				log_printf(&util_logger, "Lift: %d, %d, %3.2f degrees", ret, angle, boom_lift_angle_to_degrees(angle));
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_Y)) {

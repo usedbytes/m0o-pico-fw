@@ -34,6 +34,7 @@
 #define BOOM_LIFT_LIMIT_PIN     22
 #define BOOM_LIFT_RAISE_DIR      1
 #define BOOM_LIFT_LOWER_DIR     -1
+#define BOOM_LIFT_HOME_OFFSET   10.0 // Mostly a guesstimate
 
 #define AS5600_ADDR 0x36
 
@@ -180,6 +181,16 @@ int16_t boom_update_count()
 	return boom.extend.count;
 }
 
+float boom_extend_count_to_mm(int16_t count)
+{
+	return count / (float)BOOM_EXTEND_COUNTS_PER_MM;
+}
+
+int16_t boom_extend_mm_to_count(float mm)
+{
+	return mm * BOOM_EXTEND_COUNTS_PER_MM;
+}
+
 uint16_t __lift_get_angle_raw()
 {
 	uint8_t buf[2];
@@ -209,6 +220,16 @@ int boom_lift_get_angle(int16_t *angle)
 	*angle = (int16_t)raw_angle - boom.lift.zero_angle;
 
 	return 0;
+}
+
+float boom_lift_angle_to_degrees(int16_t angle)
+{
+	return (angle * 90.0 / 1024.0) - BOOM_LIFT_HOME_OFFSET;
+}
+
+int16_t boom_lift_degrees_to_angle(float degrees)
+{
+	return (degrees + BOOM_LIFT_HOME_OFFSET) * 1024.0 / 90.0;
 }
 
 int boom_lift_reset_angle()
