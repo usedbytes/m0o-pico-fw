@@ -252,6 +252,11 @@ static void platform_boom_lift_home(absolute_time_t scheduled, void *data)
 	case BOOM_LIFT_HOME_LOWERING:
 		if (boom_lift_at_limit()) {
 			boom_lift_set(0);
+			ret = boom_lift_reset_angle();
+			if (ret != 0) {
+				platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
+				break;
+			}
 			platform->boom_lift_state = BOOM_LIFT_HOME_DONE;
 		}
 		break;
