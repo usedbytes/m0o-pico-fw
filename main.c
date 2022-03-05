@@ -129,6 +129,7 @@ int main()
 	uint16_t btn_held = 0;
 
 	float lift_angle = -10;
+	float extension = 0;
 	while (1) {
 		input_get_event_blocking(&ev);
 		do {
@@ -165,13 +166,13 @@ int main()
 			}
 
 			if (ev.hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
-				extend_val = 127;
-				platform_run_function(platform, boom_set_func, &extend_val);
+				extension += 2;
+				platform_boom_extend_controller_set(platform, extension);
 			}
 
 			if (ev.hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
-				extend_val = -127;
-				platform_run_function(platform, boom_set_func, &extend_val);
+				extension -= 2;
+				platform_boom_extend_controller_set(platform, extension);
 			}
 
 			if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
@@ -190,10 +191,12 @@ int main()
 
 			if (ev.btn_down & (1 << BTN_BIT_Y)) {
 				platform_boom_lift_controller_set_enabled(platform, true);
+				platform_boom_extend_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_A)) {
 				platform_boom_lift_controller_set_enabled(platform, false);
+				platform_boom_extend_controller_set_enabled(platform, false);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_R1)) {
@@ -202,6 +205,14 @@ int main()
 
 			if (ev.btn_down & (1 << BTN_BIT_L1)) {
 				platform_boom_lift_controller_set(platform, 0);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_R2)) {
+				platform_boom_extend_controller_set(platform, 60);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_L2)) {
+				platform_boom_extend_controller_set(platform, 100);
 			}
 
 			prev_hat = ev.hat;

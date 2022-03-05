@@ -25,6 +25,8 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_HOME         3
 #define PLATFORM_MESSAGE_BOOM_SET          4
 #define PLATFORM_MESSAGE_BOOM_SET_ENABLED  5
+#define PLATFORM_MESSAGE_BOOM_EXTEND_SET   6
+#define PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED  7
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -43,6 +45,12 @@ struct platform_message {
 		struct {
 			bool enabled;
 		} boom_enable;
+		struct {
+			int16_t count;
+		} boom_extend_set;
+		struct {
+			bool enabled;
+		} boom_extend_enable;
 	};
 };
 
@@ -97,6 +105,9 @@ struct platform {
 
 	struct fcontroller boom_lift_pos_controller;
 	bool boom_lift_controller_enabled;
+
+	struct fcontroller boom_extend_pos_controller;
+	bool boom_extend_controller_enabled;
 };
 
 int platform_init(struct platform *platform);
@@ -114,6 +125,9 @@ int platform_boom_home(struct platform *platform);
 
 int platform_boom_lift_controller_set(struct platform *platform, float degrees);
 int platform_boom_lift_controller_set_enabled(struct platform *platform, bool enabled);
+
+int platform_boom_extend_controller_set(struct platform *platform, float mm);
+int platform_boom_extend_controller_set_enabled(struct platform *platform, bool enabled);
 
 alarm_id_t platform_schedule_function(struct platform *platform, scheduled_func_t func, void *data, absolute_time_t at);
 int platform_run_function(struct platform *platform, scheduled_func_t func, void *data);

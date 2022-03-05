@@ -20,6 +20,7 @@
 #define PLATFORM_HEADING_UPDATE_US  10000
 
 #define BOOM_LIFT_CONTROLLER_TICK 10000
+#define BOOM_EXTEND_CONTROLLER_TICK 10000
 
 #define BNO055_ADDR 0x28
 
@@ -319,6 +320,11 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	c->out_max = 128;
 	fcontroller_set_tunings(c, 0.175 * 3, 0.00, 0.001, BOOM_LIFT_CONTROLLER_TICK);
 
+	c = &platform->boom_extend_pos_controller;
+	c->out_min = -127;
+	c->out_max = 128;
+	fcontroller_set_tunings(c, 1.2, 0.0001, 0.1, BOOM_EXTEND_CONTROLLER_TICK);
+
 	return ret;
 }
 
@@ -412,6 +418,85 @@ static void platform_boom_lift_controller_run(absolute_time_t scheduled, void *d
 	platform_schedule_function(platform, platform_boom_lift_controller_run, platform, scheduled + BOOM_LIFT_CONTROLLER_TICK);
 }
 
+static void __platform_boom_extend_controller_set(struct platform *platform, int16_t count)
+{
+	struct fcontroller *c = &platform->boom_extend_pos_controller;
+	fcontroller_set(c, count);
+}
+
+int platform_boom_extend_controller_set(struct platform *platform, float mm)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_EXTEND_SET,
+		.boom_extend_set = {
+			.count = boom_extend_mm_to_count(mm),
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_boom_extend_controller_run(absolute_time_t scheduled, void *data);
+
+static void __platform_boom_extend_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	if (enabled) {
+		if (platform->boom_extend_state != BOOM_EXTEND_HOME_DONE) {
+			log_printf(&util_logger, "must home before enabling controller");
+			return;
+		}
+
+		if (platform->boom_extend_controller_enabled) {
+			log_printf(&util_logger, "already enabled");
+			return;
+		}
+
+		boom_extend_set(0);
+		int16_t current = boom_update_count();
+
+		struct fcontroller *c = &platform->boom_extend_pos_controller;
+		fcontroller_set(c, current);
+		fcontroller_reinit(c, current, 0);
+
+		platform->boom_extend_controller_enabled = true;
+		platform_schedule_function(platform, platform_boom_extend_controller_run, platform, get_absolute_time());
+	} else {
+		platform->boom_extend_controller_enabled = false;
+		boom_extend_set(0);
+		log_printf(&util_logger, "boom_extend_controller disabled");
+	}
+}
+
+int platform_boom_extend_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED,
+		.boom_extend_enable = {
+			.enabled = enabled,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_boom_extend_controller_run(absolute_time_t scheduled, void *data)
+{
+	struct platform *platform = data;
+	if (!platform->boom_extend_controller_enabled) {
+		return;
+	}
+
+	int16_t current = boom_update_count();
+	struct fcontroller *c = &platform->boom_extend_pos_controller;
+	float output = fcontroller_tick(c, current);
+	int8_t set = clamp8(output);
+	boom_extend_set(set);
+
+	log_printf(&util_logger, "extend_controller: in: %d, set: %d, out: %d", current, (int)c->setpoint, set);
+
+	platform_schedule_function(platform, platform_boom_extend_controller_run, platform, scheduled + BOOM_EXTEND_CONTROLLER_TICK);
+}
+
 static void platform_start_boom_homing(struct platform *platform)
 {
 	if (((platform->boom_extend_state > 0) && (platform->boom_extend_state < BOOM_EXTEND_HOME_DONE)) ||
@@ -463,6 +548,12 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_SET_ENABLED:
 				__platform_boom_lift_controller_set_enabled(platform, msg.boom_enable.enabled);
+				break;
+			case PLATFORM_MESSAGE_BOOM_EXTEND_SET:
+				__platform_boom_extend_controller_set(platform, msg.boom_extend_set.count);
+				break;
+			case PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED:
+				__platform_boom_extend_controller_set_enabled(platform, msg.boom_extend_enable.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));
