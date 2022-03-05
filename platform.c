@@ -205,6 +205,8 @@ static void platform_boom_extend_home(absolute_time_t scheduled, void *data)
 
 	if (platform->boom_extend_state < BOOM_EXTEND_HOME_DONE) {
 		platform_schedule_function(platform, platform_boom_extend_home, platform, scheduled + poll_us);
+	} else {
+		boom_extend_set(0);
 	}
 }
 
@@ -266,6 +268,8 @@ static void platform_boom_lift_home(absolute_time_t scheduled, void *data)
 
 	if (platform->boom_lift_state < BOOM_LIFT_HOME_DONE) {
 		platform_schedule_function(platform, platform_boom_lift_home, platform, scheduled + poll_us);
+	} else {
+		boom_lift_set(0);
 	}
 }
 
@@ -312,10 +316,25 @@ int platform_init(struct platform *platform /*, platform_config*/)
 
 static void platform_start_boom_homing(struct platform *platform)
 {
+	if (((platform->boom_extend_state > 0) && (platform->boom_extend_state < BOOM_EXTEND_HOME_DONE)) ||
+	    ((platform->boom_lift_state > 0) && (platform->boom_lift_state < BOOM_LIFT_HOME_DONE))) {
+		log_printf(&util_logger, "homing in progress. can't start");
+		return;
+	}
+
 	platform->boom_extend_state = BOOM_EXTEND_HOME_START;
-	platform_schedule_function(platform, platform_boom_extend_home, platform, get_absolute_time() + 1000000);
+	platform_schedule_function(platform, platform_boom_extend_home, platform, get_absolute_time());
 	platform->boom_lift_state = BOOM_LIFT_HOME_START;
-	platform_schedule_function(platform, platform_boom_lift_home, platform, get_absolute_time() + 1000000);
+	platform_schedule_function(platform, platform_boom_lift_home, platform, get_absolute_time());
+}
+
+int platform_boom_home(struct platform *platform)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_HOME,
+	};
+
+	return platform_send_message(platform, &msg);
 }
 
 void platform_run(struct platform *platform) {
@@ -337,6 +356,9 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_VELOCITY:
 				chassis_set(&platform->chassis, msg.velocity.linear, msg.velocity.angular);
+				break;
+			case PLATFORM_MESSAGE_BOOM_HOME:
+				platform_start_boom_homing(platform);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

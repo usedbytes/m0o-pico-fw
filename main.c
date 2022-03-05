@@ -123,7 +123,6 @@ int main()
 
 	struct input_event ev;
 
-
 	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
 
 	uint8_t prev_hat = 0;
@@ -174,30 +173,15 @@ int main()
 			}
 
 			if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
-				boom_lift_set(80);
+				boom_lift_set(127);
 			}
 
 			if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
-				boom_lift_set(-80);
-			}
-
-			if (ev.btn_down & (1 << BTN_BIT_B)) {
-				platform_run_function(platform, reset_count_func, NULL);
-			}
-
-			if (ev.btn_down & (1 << BTN_BIT_A)) {
-				platform_run_function(platform, print_count_func, NULL);
+				boom_lift_set(-127);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_X)) {
-				int16_t angle = 0;
-				int ret = boom_lift_get_angle(&angle);
-				log_printf(&util_logger, "Lift: %d, %d, %3.2f degrees", ret, angle, boom_lift_angle_to_degrees(angle));
-			}
-
-			if (ev.btn_down & (1 << BTN_BIT_Y)) {
-				int ret = boom_lift_reset_angle();
-				log_printf(&util_logger, "Reset: %d", ret);
+				platform_boom_home(platform);
 			}
 
 			prev_hat = ev.hat;

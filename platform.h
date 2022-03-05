@@ -19,8 +19,9 @@
 typedef void (*scheduled_func_t)(absolute_time_t scheduled, void *data);
 
 struct platform_message {
-#define PLATFORM_MESSAGE_RUN      1
-#define PLATFORM_MESSAGE_VELOCITY 2
+#define PLATFORM_MESSAGE_RUN       1
+#define PLATFORM_MESSAGE_VELOCITY  2
+#define PLATFORM_MESSAGE_BOOM_HOME 3
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -97,6 +98,7 @@ void platform_stop(struct platform *platform);
 */
 
 int platform_set_velocity(struct platform *platform, int8_t linear, int8_t angular);
+int platform_boom_home(struct platform *platform);
 
 alarm_id_t platform_schedule_function(struct platform *platform, scheduled_func_t func, void *data, absolute_time_t at);
 int platform_run_function(struct platform *platform, scheduled_func_t func, void *data);
