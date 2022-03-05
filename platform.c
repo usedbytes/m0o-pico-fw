@@ -8,6 +8,7 @@
 
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"
+#include "pico/float.h"
 #include "pico/sync.h"
 
 #include "boom.h"
@@ -15,6 +16,8 @@
 #include "log.h"
 #include "platform.h"
 #include "util.h"
+
+#define PI 3.1415926
 
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000
@@ -492,7 +495,7 @@ static void platform_boom_extend_controller_run(absolute_time_t scheduled, void 
 	int8_t set = clamp8(output);
 	boom_extend_set(set);
 
-	log_printf(&util_logger, "extend_controller: in: %d, set: %d, out: %d", current, (int)c->setpoint, set);
+	//log_printf(&util_logger, "extend_controller: in: %d, set: %d, out: %d", current, (int)c->setpoint, set);
 
 	platform_schedule_function(platform, platform_boom_extend_controller_run, platform, scheduled + BOOM_EXTEND_CONTROLLER_TICK);
 }
@@ -518,6 +521,147 @@ int platform_boom_home(struct platform *platform)
 	};
 
 	return platform_send_message(platform, &msg);
+}
+
+static void __platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm)
+{
+	platform->boom_pos_target.x = x_mm;
+	platform->boom_pos_target.y = y_mm;
+}
+
+int platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_TARGET_SET,
+		.boom_target_set = {
+			.x_mm = x_mm,
+			.y_mm = y_mm,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_boom_target_controller_run(absolute_time_t scheduled, void *data);
+
+static void __platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	if (enabled) {
+		__platform_boom_extend_controller_set_enabled(platform, true);
+		__platform_boom_lift_controller_set_enabled(platform, true);
+
+		platform->boom_target_controller_enabled = true;
+		platform_schedule_function(platform, platform_boom_target_controller_run, platform, get_absolute_time());
+	} else {
+		platform->boom_target_controller_enabled = false;
+		__platform_boom_lift_controller_set_enabled(platform, false);
+		__platform_boom_extend_controller_set_enabled(platform, false);
+	}
+}
+
+int platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED,
+		.boom_target_enable = {
+			.enabled = enabled,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static float max(float a, float b)
+{
+	return a > b ? a : b;
+}
+
+static float quad_solve(float a, float b, float c)
+{
+	float x1 = ((-b) + sqrtf((b * b) - (4 * a * c))) / 2 * a;
+	float x2 = ((-b) - sqrtf((b * b) - (4 * a * c))) / 2 * a;
+
+	return max(x1, x2);
+}
+
+#define BOOM_BASE_LEN 248
+static void boom_solve(struct boom_position *pos, float *angle, float *extension)
+{
+	float rads = atan2f(pos->y, pos->x);
+	*angle = rads * 180 / PI;
+	*extension = quad_solve(1, 2 * BOOM_BASE_LEN, (BOOM_BASE_LEN * BOOM_BASE_LEN) - (pos->x * pos->x) - (pos->y * pos->y));
+}
+
+static int get_current_boom_pos(struct platform *platform, struct boom_position *pos)
+{
+	int16_t count = boom_update_count();
+
+	int16_t angle;
+	int ret = boom_lift_get_angle(&angle);
+	if (ret != 0) {
+		return ret;
+	}
+
+	float mm = boom_extend_count_to_mm(count);
+	float degrees = boom_lift_angle_to_degrees(angle);
+
+	pos->x = (BOOM_BASE_LEN + mm) * cosf(degrees * PI / 180);
+	pos->y = (BOOM_BASE_LEN + mm) * sinf(degrees * PI / 180);
+
+	return 0;
+}
+
+#define BOOM_POS_TARGET_DELTA 1
+#define BOOM_POS_TARGET_MAX_SEGMENT 20
+#define BOOM_TARGET_CONTROLLER_TICK 100000
+static void platform_boom_target_controller_run(absolute_time_t scheduled, void *data)
+{
+	struct platform *platform = data;
+
+	if (!platform->boom_target_controller_enabled) {
+		return;
+	}
+
+	struct boom_position current_pos;
+	int ret = get_current_boom_pos(platform, &current_pos);
+	if (ret != 0) {
+		log_printf(&util_logger, "failed to get position");
+		__platform_boom_target_controller_set_enabled(platform, false);
+		return;
+	}
+
+	int16_t dx = platform->boom_pos_target.x - current_pos.x;
+	int16_t dy = platform->boom_pos_target.y - current_pos.y;
+
+	float distance = sqrt(dx * dx + dy * dy);
+	if (distance <= BOOM_POS_TARGET_DELTA) {
+		log_printf(&util_logger, "target reached");
+		__platform_boom_target_controller_set_enabled(platform, false);
+		return;
+	}
+
+	struct boom_position mid_target;
+	if (distance < BOOM_POS_TARGET_MAX_SEGMENT) {
+		// Move direct
+		mid_target = platform->boom_pos_target;
+		log_printf(&util_logger, "move direct: %d, %d", mid_target.x, mid_target.y);
+	} else {
+		// Target part of the way
+		mid_target = (struct boom_position){
+			.x = current_pos.x + (dx / 3),
+			.y = current_pos.y + (dy / 3),
+		};
+		log_printf(&util_logger, "move intermediate: %d, %d", mid_target.x, mid_target.y);
+	}
+
+	float angle_degrees, extension_mm;
+	boom_solve(&mid_target, &angle_degrees, &extension_mm);
+
+	__platform_boom_extend_controller_set(platform, boom_extend_mm_to_count(extension_mm));
+	__platform_boom_lift_controller_set(platform, boom_lift_degrees_to_angle(angle_degrees));
+
+	platform_schedule_function(platform, platform_boom_target_controller_run,
+	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);
 }
 
 void platform_run(struct platform *platform) {
@@ -554,6 +698,12 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED:
 				__platform_boom_extend_controller_set_enabled(platform, msg.boom_extend_enable.enabled);
+				break;
+			case PLATFORM_MESSAGE_BOOM_TARGET_SET:
+				__platform_boom_target_controller_set(platform, msg.boom_target_set.x_mm, msg.boom_target_set.y_mm);
+				break;
+			case PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED:
+				__platform_boom_target_controller_set_enabled(platform, msg.boom_target_enable.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

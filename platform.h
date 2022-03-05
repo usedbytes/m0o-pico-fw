@@ -27,6 +27,8 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_SET_ENABLED  5
 #define PLATFORM_MESSAGE_BOOM_EXTEND_SET   6
 #define PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED  7
+#define PLATFORM_MESSAGE_BOOM_TARGET_SET   8
+#define PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED  9
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -51,6 +53,13 @@ struct platform_message {
 		struct {
 			bool enabled;
 		} boom_extend_enable;
+		struct {
+			int16_t x_mm;
+			int16_t y_mm;
+		} boom_target_set;
+		struct {
+			bool enabled;
+		} boom_target_enable;
 	};
 };
 
@@ -77,6 +86,10 @@ enum boom_lift_state {
 	// Order is important
 	BOOM_LIFT_HOME_DONE,
 	BOOM_LIFT_HOME_ERROR,
+};
+
+struct boom_position {
+	int16_t x, y;
 };
 
 struct platform {
@@ -108,6 +121,9 @@ struct platform {
 
 	struct fcontroller boom_extend_pos_controller;
 	bool boom_extend_controller_enabled;
+
+	struct boom_position boom_pos_target;
+	bool boom_target_controller_enabled;
 };
 
 int platform_init(struct platform *platform);
@@ -131,5 +147,8 @@ int platform_boom_extend_controller_set_enabled(struct platform *platform, bool 
 
 alarm_id_t platform_schedule_function(struct platform *platform, scheduled_func_t func, void *data, absolute_time_t at);
 int platform_run_function(struct platform *platform, scheduled_func_t func, void *data);
+
+int platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm);
+int platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled);
 
 #endif /* __PLATFORM_H__ */

@@ -96,10 +96,16 @@ void print_count_func(absolute_time_t scheduled, void *data)
 	log_printf(&util_logger, "count: %d, %3.2f mm", count, mm);
 }
 
-void boom_set_func(absolute_time_t scheduled, void *data)
+void boom_extend_set_func(absolute_time_t scheduled, void *data)
 {
 	int8_t *val = data;
 	boom_extend_set(*val);
+}
+
+void boom_lift_set_func(absolute_time_t scheduled, void *data)
+{
+	int8_t *val = data;
+	boom_lift_set(*val);
 }
 
 int main()
@@ -128,8 +134,8 @@ int main()
 	uint8_t prev_hat = 0;
 	uint16_t btn_held = 0;
 
-	float lift_angle = -10;
-	float extension = 0;
+	int8_t extend_val;
+	int8_t lift_val;
 	while (1) {
 		input_get_event_blocking(&ev);
 		do {
@@ -157,32 +163,31 @@ int main()
 			int8_t rot = clamp8(-ev.rx);
 			platform_set_velocity(platform, linear, rot);
 
-			int8_t extend_val;
-
 			if (ev.hat == 0 && prev_hat != 0) {
 				extend_val = 0;
-				platform_run_function(platform, boom_set_func, &extend_val);
-				boom_lift_set(0);
+				lift_val = 0;
+				platform_run_function(platform, boom_extend_set_func, &extend_val);
+				platform_run_function(platform, boom_lift_set_func, &lift_val);
 			}
 
 			if (ev.hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
-				extension += 2;
-				platform_boom_extend_controller_set(platform, extension);
+				extend_val = 127;
+				platform_run_function(platform, boom_extend_set_func, &extend_val);
 			}
 
 			if (ev.hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
-				extension -= 2;
-				platform_boom_extend_controller_set(platform, extension);
+				extend_val = -127;
+				platform_run_function(platform, boom_extend_set_func, &extend_val);
 			}
 
 			if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
-				lift_angle += 2;
-				platform_boom_lift_controller_set(platform, lift_angle);
+				lift_val = 127;
+				platform_run_function(platform, boom_lift_set_func, &lift_val);
 			}
 
 			if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
-				lift_angle -= 2;
-				platform_boom_lift_controller_set(platform, lift_angle);
+				lift_val = -127;
+				platform_run_function(platform, boom_lift_set_func, &lift_val);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_X)) {
@@ -190,29 +195,39 @@ int main()
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_Y)) {
-				platform_boom_lift_controller_set_enabled(platform, true);
-				platform_boom_extend_controller_set_enabled(platform, true);
+				//platform_boom_lift_controller_set_enabled(platform, true);
+				//platform_boom_extend_controller_set_enabled(platform, true);
+				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_A)) {
-				platform_boom_lift_controller_set_enabled(platform, false);
-				platform_boom_extend_controller_set_enabled(platform, false);
+				//platform_boom_lift_controller_set_enabled(platform, false);
+				//platform_boom_extend_controller_set_enabled(platform, false);
+				platform_boom_target_controller_set_enabled(platform, false);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_R1)) {
-				platform_boom_lift_controller_set(platform, 60);
+				//platform_boom_lift_controller_set(platform, 60);
+				platform_boom_target_controller_set(platform, 248 + 50, 80);
+				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_L1)) {
-				platform_boom_lift_controller_set(platform, 0);
+				//platform_boom_lift_controller_set(platform, 0);
+				platform_boom_target_controller_set(platform, 248 + 50, -20);
+				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_R2)) {
-				platform_boom_extend_controller_set(platform, 60);
+				//platform_boom_extend_controller_set(platform, 60);
+				platform_boom_target_controller_set(platform, 248 + 0, 80);
+				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_L2)) {
-				platform_boom_extend_controller_set(platform, 100);
+				//platform_boom_extend_controller_set(platform, 100);
+				platform_boom_target_controller_set(platform, 248 + 0, -20);
+				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			prev_hat = ev.hat;
