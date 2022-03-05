@@ -12,6 +12,7 @@
 
 #include "bno055.h"
 #include "chassis.h"
+#include "controller.h"
 #include "i2c_bus.h"
 
 #define PLATFORM_ALARM_POOL_SIZE    16
@@ -19,9 +20,11 @@
 typedef void (*scheduled_func_t)(absolute_time_t scheduled, void *data);
 
 struct platform_message {
-#define PLATFORM_MESSAGE_RUN       1
-#define PLATFORM_MESSAGE_VELOCITY  2
-#define PLATFORM_MESSAGE_BOOM_HOME 3
+#define PLATFORM_MESSAGE_RUN               1
+#define PLATFORM_MESSAGE_VELOCITY          2
+#define PLATFORM_MESSAGE_BOOM_HOME         3
+#define PLATFORM_MESSAGE_BOOM_SET          4
+#define PLATFORM_MESSAGE_BOOM_SET_ENABLED  5
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -34,6 +37,12 @@ struct platform_message {
 			int8_t linear;
 			int8_t angular;
 		} velocity;
+		struct {
+			int16_t angle;
+		} boom_set;
+		struct {
+			bool enabled;
+		} boom_enable;
 	};
 };
 
@@ -85,6 +94,9 @@ struct platform {
 
 	enum boom_extend_state boom_extend_state;
 	enum boom_lift_state boom_lift_state;
+
+	struct fcontroller boom_lift_pos_controller;
+	bool boom_lift_controller_enabled;
 };
 
 int platform_init(struct platform *platform);
@@ -99,6 +111,9 @@ void platform_stop(struct platform *platform);
 
 int platform_set_velocity(struct platform *platform, int8_t linear, int8_t angular);
 int platform_boom_home(struct platform *platform);
+
+int platform_boom_lift_controller_set(struct platform *platform, float degrees);
+int platform_boom_lift_controller_set_enabled(struct platform *platform, bool enabled);
 
 alarm_id_t platform_schedule_function(struct platform *platform, scheduled_func_t func, void *data, absolute_time_t at);
 int platform_run_function(struct platform *platform, scheduled_func_t func, void *data);

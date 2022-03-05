@@ -127,6 +127,8 @@ int main()
 
 	uint8_t prev_hat = 0;
 	uint16_t btn_held = 0;
+
+	float lift_angle = -10;
 	while (1) {
 		input_get_event_blocking(&ev);
 		do {
@@ -173,15 +175,33 @@ int main()
 			}
 
 			if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
-				boom_lift_set(127);
+				lift_angle += 2;
+				platform_boom_lift_controller_set(platform, lift_angle);
 			}
 
 			if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
-				boom_lift_set(-127);
+				lift_angle -= 2;
+				platform_boom_lift_controller_set(platform, lift_angle);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_X)) {
 				platform_boom_home(platform);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_Y)) {
+				platform_boom_lift_controller_set_enabled(platform, true);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_A)) {
+				platform_boom_lift_controller_set_enabled(platform, false);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_R1)) {
+				platform_boom_lift_controller_set(platform, 60);
+			}
+
+			if (ev.btn_down & (1 << BTN_BIT_L1)) {
+				platform_boom_lift_controller_set(platform, 0);
 			}
 
 			prev_hat = ev.hat;

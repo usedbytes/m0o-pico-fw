@@ -11,12 +11,15 @@
 #include "pico/sync.h"
 
 #include "boom.h"
+#include "controller.h"
 #include "log.h"
 #include "platform.h"
 #include "util.h"
 
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000
+
+#define BOOM_LIFT_CONTROLLER_TICK 10000
 
 #define BNO055_ADDR 0x28
 
@@ -311,7 +314,102 @@ int platform_init(struct platform *platform /*, platform_config*/)
 		platform->status |= PLATFORM_STATUS_BNO055_PRESENT | PLATFORM_STATUS_BNO055_OK;
 	}
 
+	struct fcontroller *c = &platform->boom_lift_pos_controller;
+	c->out_min = -127;
+	c->out_max = 128;
+	fcontroller_set_tunings(c, 0.175 * 3, 0.00, 0.001, BOOM_LIFT_CONTROLLER_TICK);
+
 	return ret;
+}
+
+static void __platform_boom_lift_controller_set(struct platform *platform, int16_t angle)
+{
+	struct fcontroller *c = &platform->boom_lift_pos_controller;
+	fcontroller_set(c, angle);
+}
+
+int platform_boom_lift_controller_set(struct platform *platform, float degrees)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_SET,
+		.boom_set = {
+			.angle = boom_lift_degrees_to_angle(degrees),
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_boom_lift_controller_run(absolute_time_t scheduled, void *data);
+
+static void __platform_boom_lift_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	if (enabled) {
+		if (platform->boom_lift_state != BOOM_LIFT_HOME_DONE) {
+			log_printf(&util_logger, "must home before enabling controller");
+			return;
+		}
+
+		if (platform->boom_lift_controller_enabled) {
+			log_printf(&util_logger, "already enabled");
+			return;
+		}
+
+		boom_lift_set(0);
+		int16_t current;
+		int ret = boom_lift_get_angle(&current);
+		if (ret) {
+			log_printf(&util_logger, "error getting angle");
+			return;
+		}
+
+		struct fcontroller *c = &platform->boom_lift_pos_controller;
+		fcontroller_set(c, current);
+		fcontroller_reinit(c, current, 0);
+
+		platform->boom_lift_controller_enabled = true;
+		platform_schedule_function(platform, platform_boom_lift_controller_run, platform, get_absolute_time());
+	} else {
+		platform->boom_lift_controller_enabled = false;
+		boom_lift_set(0);
+		log_printf(&util_logger, "boom_lift_controller disabled");
+	}
+}
+
+int platform_boom_lift_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_SET_ENABLED,
+		.boom_enable = {
+			.enabled = enabled,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_boom_lift_controller_run(absolute_time_t scheduled, void *data)
+{
+	struct platform *platform = data;
+	if (!platform->boom_lift_controller_enabled) {
+		return;
+	}
+
+	int16_t current;
+	int ret = boom_lift_get_angle(&current);
+	if (ret) {
+		log_printf(&util_logger, "error getting angle");
+		__platform_boom_lift_controller_set_enabled(platform, false);
+	}
+
+	struct fcontroller *c = &platform->boom_lift_pos_controller;
+	float output = fcontroller_tick(c, current);
+	int8_t set = clamp8(output);
+	boom_lift_set(set);
+
+	//log_printf(&util_logger, "lift_controller: in: %d, set: %d, out: %d", current, (int)c->setpoint, set);
+
+	platform_schedule_function(platform, platform_boom_lift_controller_run, platform, scheduled + BOOM_LIFT_CONTROLLER_TICK);
 }
 
 static void platform_start_boom_homing(struct platform *platform)
@@ -343,7 +441,7 @@ void platform_run(struct platform *platform) {
 		platform_update_heading(get_absolute_time(), platform);
 	}
 
-	platform_start_boom_homing(platform);
+	//platform_start_boom_homing(platform);
 
 	while (1) {
 		struct platform_message msg;
@@ -359,6 +457,12 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_HOME:
 				platform_start_boom_homing(platform);
+				break;
+			case PLATFORM_MESSAGE_BOOM_SET:
+				__platform_boom_lift_controller_set(platform, msg.boom_set.angle);
+				break;
+			case PLATFORM_MESSAGE_BOOM_SET_ENABLED:
+				__platform_boom_lift_controller_set_enabled(platform, msg.boom_enable.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

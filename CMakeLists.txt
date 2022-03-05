@@ -17,6 +17,7 @@ add_executable(rebound
 	camera_task.c
 	chassis.c
 	comm.c
+	controller.c
 	i2c_bus.c
 	input.c
 	log.c
