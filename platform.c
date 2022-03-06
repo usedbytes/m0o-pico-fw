@@ -604,8 +604,6 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 		return;
 	}
 
-	uint32_t start_time = time_us_32();
-
 	float radians;
 	float mm;
 
@@ -617,6 +615,10 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 		__platform_boom_target_controller_set_enabled(platform, false);
 		return;
 	}
+
+	// Skip the i2c traffic for timing purposes
+	// At  100kHz it adds 500 us!
+	uint32_t start_time = time_us_32();
 
 	mm = boom_extend_count_to_mm(count);
 	radians = d2r(boom_lift_angle_to_degrees(angle));
