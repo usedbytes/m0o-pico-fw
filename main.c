@@ -208,25 +208,25 @@ int main()
 
 			if (ev.btn_down & (1 << BTN_BIT_R1)) {
 				//platform_boom_lift_controller_set(platform, 60);
-				platform_boom_target_controller_set(platform, 248 + 50, 80);
+				platform_boom_target_controller_set(platform, 50, 80);
 				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_L1)) {
 				//platform_boom_lift_controller_set(platform, 0);
-				platform_boom_target_controller_set(platform, 248 + 50, -20);
+				platform_boom_target_controller_set(platform, 50, -20);
 				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_R2)) {
 				//platform_boom_extend_controller_set(platform, 60);
-				platform_boom_target_controller_set(platform, 248 + 0, 80);
+				platform_boom_target_controller_set(platform, 25, 80);
 				platform_boom_target_controller_set_enabled(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_L2)) {
 				//platform_boom_extend_controller_set(platform, 100);
-				platform_boom_target_controller_set(platform, 248 + 0, -20);
+				platform_boom_target_controller_set(platform, 25, -20);
 				platform_boom_target_controller_set_enabled(platform, true);
 			}
 

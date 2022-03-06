@@ -13,6 +13,7 @@
 
 #include "boom.h"
 #include "controller.h"
+#include "kinematics.h"
 #include "log.h"
 #include "platform.h"
 #include "util.h"
@@ -326,7 +327,7 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	c = &platform->boom_extend_pos_controller;
 	c->out_min = -127;
 	c->out_max = 128;
-	fcontroller_set_tunings(c, 1.2, 0.0001, 0.1, BOOM_EXTEND_CONTROLLER_TICK);
+	fcontroller_set_tunings(c, 1.2, 0.0001, 0.25, BOOM_EXTEND_CONTROLLER_TICK);
 
 	return ret;
 }
@@ -592,26 +593,7 @@ static void boom_solve(struct boom_position *pos, float *angle, float *extension
 	*extension = quad_solve(1, 2 * BOOM_BASE_LEN, (BOOM_BASE_LEN * BOOM_BASE_LEN) - (pos->x * pos->x) - (pos->y * pos->y));
 }
 
-static int get_current_boom_pos(struct platform *platform, struct boom_position *pos)
-{
-	int16_t count = boom_update_count();
-
-	int16_t angle;
-	int ret = boom_lift_get_angle(&angle);
-	if (ret != 0) {
-		return ret;
-	}
-
-	float mm = boom_extend_count_to_mm(count);
-	float degrees = boom_lift_angle_to_degrees(angle);
-
-	pos->x = (BOOM_BASE_LEN + mm) * cosf(degrees * PI / 180);
-	pos->y = (BOOM_BASE_LEN + mm) * sinf(degrees * PI / 180);
-
-	return 0;
-}
-
-#define BOOM_POS_TARGET_DELTA 1
+#define BOOM_POS_TARGET_DELTA 2
 #define BOOM_POS_TARGET_MAX_SEGMENT 20
 #define BOOM_TARGET_CONTROLLER_TICK 100000
 static void platform_boom_target_controller_run(absolute_time_t scheduled, void *data)
@@ -622,16 +604,27 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 		return;
 	}
 
-	struct boom_position current_pos;
-	int ret = get_current_boom_pos(platform, &current_pos);
+	uint32_t start_time = time_us_32();
+
+	float radians;
+	float mm;
+
+	int16_t count = boom_update_count();
+	int16_t angle;
+	int ret = boom_lift_get_angle(&angle);
 	if (ret != 0) {
 		log_printf(&util_logger, "failed to get position");
 		__platform_boom_target_controller_set_enabled(platform, false);
 		return;
 	}
 
-	int16_t dx = platform->boom_pos_target.x - current_pos.x;
-	int16_t dy = platform->boom_pos_target.y - current_pos.y;
+	mm = boom_extend_count_to_mm(count);
+	radians = d2r(boom_lift_angle_to_degrees(angle));
+
+	struct point p = forward_kinematics(radians, mm);
+
+	int16_t dx = platform->boom_pos_target.x - p.x;
+	int16_t dy = platform->boom_pos_target.y - p.y;
 
 	float distance = sqrt(dx * dx + dy * dy);
 	if (distance <= BOOM_POS_TARGET_DELTA) {
@@ -640,6 +633,28 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 		return;
 	}
 
+	struct v2 vec = {
+		.a = dx,
+		.b = dy,
+	};
+	struct m2 j = get_jacobian(radians, mm);
+	struct m2 j_inv = m2_inverse(&j);
+	struct v2 q_dot = m2_multvect(&j_inv, &vec);
+
+	int16_t new_angle = boom_lift_degrees_to_angle(r2d(radians + (q_dot.a * 0.2)));
+	int16_t new_count = boom_extend_mm_to_count(mm + (q_dot.b * 0.2));
+
+	uint32_t end_time = time_us_32();
+
+	__platform_boom_extend_controller_set(platform, new_count);
+	__platform_boom_lift_controller_set(platform, new_angle);
+
+	log_printf(&util_logger, "%d, %d -> %d, %d, took %d us", angle, count,
+			new_angle, new_count, end_time - start_time);
+	log_printf(&util_logger, "%d, %d -> %d, %d", (int)p.x, (int)p.y,
+			platform->boom_pos_target.x, platform->boom_pos_target.y);
+
+	/*
 	struct boom_position mid_target;
 	if (distance < BOOM_POS_TARGET_MAX_SEGMENT) {
 		// Move direct
@@ -659,6 +674,7 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 
 	__platform_boom_extend_controller_set(platform, boom_extend_mm_to_count(extension_mm));
 	__platform_boom_lift_controller_set(platform, boom_lift_degrees_to_angle(angle_degrees));
+	*/
 
 	platform_schedule_function(platform, platform_boom_target_controller_run,
 	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);

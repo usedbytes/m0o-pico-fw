@@ -20,6 +20,7 @@ add_executable(rebound
 	controller.c
 	i2c_bus.c
 	input.c
+	kinematics.c
 	log.c
 	main.c
 	platform.c
