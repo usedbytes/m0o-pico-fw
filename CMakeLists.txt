@@ -30,6 +30,7 @@ add_executable(rebound
 
 add_subdirectory(vl53l0x)
 add_subdirectory(camera)
+add_subdirectory(ioexpander)
 
 pico_add_extra_outputs(rebound)
 
@@ -51,5 +52,6 @@ target_link_libraries(rebound
 	hardware_structs
 	hardware_watchdog
 	hardware_uart
+	ioexpander
 	vl53l0x
 )

@@ -281,6 +281,16 @@ static void platform_boom_lift_home(absolute_time_t scheduled, void *data)
 	}
 }
 
+static inline int __i2c_write_blocking(void *i2c_handle, uint8_t addr, const uint8_t *src, size_t len)
+{
+	return i2c_bus_write_blocking((struct i2c_bus *)i2c_handle, addr, src, len);
+}
+
+static inline int __i2c_read_blocking(void *i2c_handle, uint8_t addr, uint8_t *dst, size_t len)
+{
+	return i2c_bus_read_blocking((struct i2c_bus *)i2c_handle, addr, dst, len);
+}
+
 int platform_init(struct platform *platform /*, platform_config*/)
 {
 	int ret = 0;
@@ -311,6 +321,20 @@ int platform_init(struct platform *platform /*, platform_config*/)
         gpio_pull_up(I2C_AUX_PIN_SCL);
 
 	boom_init(&platform->i2c_aux);
+
+	ret = ioe_init(&platform->ioe, __i2c_write_blocking, __i2c_read_blocking, &platform->i2c_aux);
+	if (!ret) {
+		platform->status |= PLATFORM_STATUS_IOE_PRESENT | PLATFORM_STATUS_IOE_OK;
+
+		ret = ioe_set_pwm_period(&platform->ioe, 60000);
+		log_printf(&util_logger, "ioe_set_pwm_period: %d\n", ret);
+
+		ioe_set_pwm_divider(&platform->ioe, IOE_PWM_DIVIDER_8);
+		log_printf(&util_logger, "ioe_set_pwm_divider: %d\n", ret);
+
+		ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
+		log_printf(&util_logger, "ioe_set_pin_mode: %d\n", ret);
+	}
 
 	chassis_init(&platform->chassis, CHASSIS_PIN_L_A, CHASSIS_PIN_R_A);
 
@@ -682,10 +706,33 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);
 }
 
+static void platform_sweep_servo_run(absolute_time_t scheduled, void *data)
+{
+	struct platform *platform = data;
+	static uint16_t duty = 2000;
+	static const uint16_t duty_min = 2000;
+	static const uint16_t duty_max = 8000;
+	static const uint16_t duty_step = (duty_max - duty_min) / 20;
+
+	ioe_set_pwm_duty(&platform->ioe, 1, duty);
+	duty += duty_step;
+	if (duty > duty_max) {
+		duty = duty_min;
+	}
+
+	platform_schedule_function(platform, platform_sweep_servo_run,
+	                           platform, get_absolute_time() + 300000);
+}
+
 void platform_run(struct platform *platform) {
 	// Kick off heading updates
 	if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
 		platform_update_heading(get_absolute_time(), platform);
+	}
+
+	if (platform->status & PLATFORM_STATUS_IOE_OK) {
+		platform_schedule_function(platform, platform_sweep_servo_run,
+					   platform, get_absolute_time() + 300000);
 	}
 
 	//platform_start_boom_homing(platform);

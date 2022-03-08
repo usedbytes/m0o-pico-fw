@@ -14,6 +14,7 @@
 #include "chassis.h"
 #include "controller.h"
 #include "i2c_bus.h"
+#include "ioexpander.h"
 
 #define PLATFORM_ALARM_POOL_SIZE    16
 
@@ -101,6 +102,8 @@ struct platform {
 
 #define PLATFORM_STATUS_BNO055_PRESENT (1 << 0)
 #define PLATFORM_STATUS_BNO055_OK      (1 << 1)
+#define PLATFORM_STATUS_IOE_PRESENT    (1 << 2)
+#define PLATFORM_STATUS_IOE_OK         (1 << 3)
 	uint32_t status;
 
 	struct i2c_bus i2c_main;
@@ -108,6 +111,7 @@ struct platform {
 	struct chassis chassis;
 
 	struct i2c_bus i2c_aux;
+	struct ioexpander ioe;
 
 	absolute_time_t heading_timestamp;
 	uint32_t heading_update_us;
