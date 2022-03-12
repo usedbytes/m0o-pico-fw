@@ -308,17 +308,17 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	// hard_assert if the hardware alarm is already claimed
 	hard_assert(platform->alarm_pool);
 
-        i2c_bus_init(&platform->i2c_main, I2C_MAIN_BUS, 100000);
-        gpio_set_function(I2C_MAIN_PIN_SDA, GPIO_FUNC_I2C);
-        gpio_set_function(I2C_MAIN_PIN_SCL, GPIO_FUNC_I2C);
-        gpio_pull_up(I2C_MAIN_PIN_SDA);
-        gpio_pull_up(I2C_MAIN_PIN_SCL);
+	i2c_bus_init(&platform->i2c_main, I2C_MAIN_BUS, 100000);
+	gpio_set_function(I2C_MAIN_PIN_SDA, GPIO_FUNC_I2C);
+	gpio_set_function(I2C_MAIN_PIN_SCL, GPIO_FUNC_I2C);
+	gpio_pull_up(I2C_MAIN_PIN_SDA);
+	gpio_pull_up(I2C_MAIN_PIN_SCL);
 
-        i2c_bus_init(&platform->i2c_aux, I2C_AUX_BUS, 100000);
-        gpio_set_function(I2C_AUX_PIN_SDA, GPIO_FUNC_I2C);
-        gpio_set_function(I2C_AUX_PIN_SCL, GPIO_FUNC_I2C);
-        gpio_pull_up(I2C_AUX_PIN_SDA);
-        gpio_pull_up(I2C_AUX_PIN_SCL);
+	i2c_bus_init(&platform->i2c_aux, I2C_AUX_BUS, 100000);
+	gpio_set_function(I2C_AUX_PIN_SDA, GPIO_FUNC_I2C);
+	gpio_set_function(I2C_AUX_PIN_SCL, GPIO_FUNC_I2C);
+	gpio_pull_up(I2C_AUX_PIN_SDA);
+	gpio_pull_up(I2C_AUX_PIN_SCL);
 
 	boom_init(&platform->i2c_aux);
 
