@@ -9,9 +9,14 @@
 
 #include <stdint.h>
 
+struct slice {
+	unsigned int slice_num;
+	unsigned int pwm_min;
+};
+
 struct chassis {
-	uint slice_l;
-	uint slice_r;
+	struct slice slice_l;
+	struct slice slice_r;
 
 	int8_t l;
 	int8_t r;
@@ -25,8 +30,8 @@ void chassis_set_raw(struct chassis *chassis, int8_t left, int8_t right);
 // to meet the requested rotational speed.
 void chassis_set(struct chassis *chassis, int8_t linear, int8_t rot);
 
-void slice_set(uint slice, int8_t value);
-void slice_set_with_brake(uint slice, int8_t value, bool brake);
-void init_slice(uint slice, uint8_t pin_a);
+void slice_set(struct slice *slice, int8_t value);
+void slice_set_with_brake(struct slice *slice, int8_t value, bool brake);
+void init_slice(struct slice *slice, unsigned int slice_num, unsigned int pwm_min, uint8_t pin_a);
 
 #endif /* __CHASSIS_H__ */

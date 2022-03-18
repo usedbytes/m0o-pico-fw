@@ -42,7 +42,7 @@
 
 struct boom {
 	struct {
-		uint motor_slice;
+		struct slice motor_slice;
 		uint encoder_slice;
 		volatile int8_t raw_val;
 		bool cooldown;
@@ -51,7 +51,7 @@ struct boom {
 		uint16_t last_count;
 	} extend;
 	struct {
-		uint motor_slice;
+		struct slice motor_slice;
 		struct i2c_bus *i2c;
 		int16_t zero_angle;
 		volatile int8_t raw_val;
@@ -147,7 +147,7 @@ int boom_extend_set(int8_t val)
 	    ((boom.extend.raw_val != 0) && (raw_val == 0))) {
 		boom.extend.cooldown = true;
 		boom.extend.cooldown_ts = time_us_32();
-		slice_set_with_brake(boom.extend.motor_slice, 0, true);
+		slice_set_with_brake(&boom.extend.motor_slice, 0, true);
 		return -1;
 	}
 
@@ -157,7 +157,7 @@ int boom_extend_set(int8_t val)
 	}
 
 	boom.extend.raw_val = raw_val;
-	slice_set_with_brake(boom.extend.motor_slice, raw_val, true);
+	slice_set_with_brake(&boom.extend.motor_slice, raw_val, true);
 
 	return 0;
 }
@@ -270,7 +270,7 @@ int boom_lift_set(int8_t val)
 	}
 
 	boom.lift.raw_val = raw_val;
-	slice_set_with_brake(boom.lift.motor_slice, raw_val, true);
+	slice_set_with_brake(&boom.lift.motor_slice, raw_val, true);
 
 	return 0;
 }
@@ -281,10 +281,8 @@ void boom_init(struct i2c_bus *i2c)
 	gpio_set_pulls(BOOM_EXTEND_LIMIT_PIN, true, false);
 	gpio_set_irq_enabled_with_callback(BOOM_EXTEND_LIMIT_PIN, GPIO_IRQ_EDGE_RISE, true, boom_gpio_irq_cb);
 
-	boom.extend.motor_slice = pwm_gpio_to_slice_num(BOOM_EXTEND_MOTOR_A_PIN);
 	boom.extend.encoder_slice = pwm_gpio_to_slice_num(BOOM_EXTEND_ENC_PIN);
-
-	init_slice(boom.extend.motor_slice, BOOM_EXTEND_MOTOR_A_PIN);
+	init_slice(&boom.extend.motor_slice, pwm_gpio_to_slice_num(BOOM_EXTEND_MOTOR_A_PIN), 20, BOOM_EXTEND_MOTOR_A_PIN);
 
 	gpio_set_function(BOOM_EXTEND_ENC_PIN, GPIO_FUNC_PWM);
 	pwm_config c = pwm_get_default_config();
@@ -296,6 +294,5 @@ void boom_init(struct i2c_bus *i2c)
 	gpio_set_irq_enabled(BOOM_LIFT_LIMIT_PIN, GPIO_IRQ_EDGE_RISE, true);
 
 	boom.lift.i2c = i2c;
-	boom.lift.motor_slice = pwm_gpio_to_slice_num(BOOM_LIFT_MOTOR_A_PIN);
-	init_slice(boom.lift.motor_slice, BOOM_LIFT_MOTOR_A_PIN);
+	init_slice(&boom.lift.motor_slice, pwm_gpio_to_slice_num(BOOM_LIFT_MOTOR_A_PIN), 20, BOOM_LIFT_MOTOR_A_PIN);
 }
