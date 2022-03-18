@@ -39,6 +39,7 @@ static inline int8_t clamp8(int16_t value) {
 enum control_event_type {
 	CONTROL_EVENT_TYPE_INPUT = 1,
 	CONTROL_EVENT_TYPE_DUMMY,
+	CONTROL_EVENT_TYPE_PID,
 };
 
 struct control_event {

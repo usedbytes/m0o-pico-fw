@@ -344,7 +344,7 @@ int platform_init(struct platform *platform /*, platform_config*/)
 		platform->status |= PLATFORM_STATUS_BNO055_PRESENT | PLATFORM_STATUS_BNO055_OK;
 	}
 
-	struct fcontroller *c = &platform->boom_lift_pos_controller;
+	struct fcontroller *c = &platform->boom_lift_controller;
 	c->out_min = -127;
 	c->out_max = 128;
 	fcontroller_set_tunings(c, 0.175 * 3, 0.00, 0.001, BOOM_LIFT_CONTROLLER_TICK);
@@ -359,7 +359,7 @@ int platform_init(struct platform *platform /*, platform_config*/)
 
 static void __platform_boom_lift_controller_set(struct platform *platform, int16_t angle)
 {
-	struct fcontroller *c = &platform->boom_lift_pos_controller;
+	struct fcontroller *c = &platform->boom_lift_controller;
 	fcontroller_set(c, angle);
 }
 
@@ -398,7 +398,7 @@ static void __platform_boom_lift_controller_set_enabled(struct platform *platfor
 			return;
 		}
 
-		struct fcontroller *c = &platform->boom_lift_pos_controller;
+		struct fcontroller *c = &platform->boom_lift_controller;
 		fcontroller_set(c, current);
 		fcontroller_reinit(c, current, 0);
 
@@ -437,7 +437,7 @@ static void platform_boom_lift_controller_run(absolute_time_t scheduled, void *d
 		__platform_boom_lift_controller_set_enabled(platform, false);
 	}
 
-	struct fcontroller *c = &platform->boom_lift_pos_controller;
+	struct fcontroller *c = &platform->boom_lift_controller;
 	float output = fcontroller_tick(c, current);
 	int8_t set = clamp8(output);
 	boom_lift_set(set);
@@ -613,14 +613,6 @@ static float quad_solve(float a, float b, float c)
 	return max(x1, x2);
 }
 
-#define BOOM_BASE_LEN 248
-static void boom_solve(struct boom_position *pos, float *angle, float *extension)
-{
-	float rads = atan2f(pos->y, pos->x);
-	*angle = rads * 180 / PI;
-	*extension = quad_solve(1, 2 * BOOM_BASE_LEN, (BOOM_BASE_LEN * BOOM_BASE_LEN) - (pos->x * pos->x) - (pos->y * pos->y));
-}
-
 // magenc value to PWM value to keep the forks level
 const int16_t fork_servo_cal[][2] = {
 	{   0, 6450 },
@@ -724,28 +716,6 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 	log_printf(&util_logger, "%d, %d -> %d, %d", (int)p.x, (int)p.y,
 			platform->boom_pos_target.x, platform->boom_pos_target.y);
 
-	/*
-	struct boom_position mid_target;
-	if (distance < BOOM_POS_TARGET_MAX_SEGMENT) {
-		// Move direct
-		mid_target = platform->boom_pos_target;
-		log_printf(&util_logger, "move direct: %d, %d", mid_target.x, mid_target.y);
-	} else {
-		// Target part of the way
-		mid_target = (struct boom_position){
-			.x = current_pos.x + (dx / 3),
-			.y = current_pos.y + (dy / 3),
-		};
-		log_printf(&util_logger, "move intermediate: %d, %d", mid_target.x, mid_target.y);
-	}
-
-	float angle_degrees, extension_mm;
-	boom_solve(&mid_target, &angle_degrees, &extension_mm);
-
-	__platform_boom_extend_controller_set(platform, boom_extend_mm_to_count(extension_mm));
-	__platform_boom_lift_controller_set(platform, boom_lift_degrees_to_angle(angle_degrees));
-	*/
-
 	platform_schedule_function(platform, platform_boom_target_controller_run,
 	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);
 }
@@ -825,6 +795,33 @@ static void __platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t 
 	ioe_set_pwm_duty(&platform->ioe, pin, val);
 }
 
+int platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id, float kp, float ki, float kd)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_PID_SET,
+		.pid_set = {
+			.id = id,
+			.kp = kp,
+			.ki = ki,
+			.kd = kd,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void __platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id, float kp, float ki, float kd)
+{
+	switch (id) {
+	case PID_CONTROLLER_ID_LIFT:
+		fcontroller_set_tunings(&platform->boom_lift_controller, kp, ki, kd, BOOM_LIFT_CONTROLLER_TICK);
+		break;
+	case PID_CONTROLLER_ID_EXTEND:
+		fcontroller_set_tunings(&platform->boom_extend_pos_controller, kp, ki, kd, BOOM_EXTEND_CONTROLLER_TICK);
+		break;
+	}
+}
+
 void platform_run(struct platform *platform) {
 	// Kick off heading updates
 	if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
@@ -876,6 +873,9 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED:
 				__platform_servo_level_set_enabled(platform, msg.servo_level_enable.enabled);
+				break;
+			case PLATFORM_MESSAGE_PID_SET:
+				__platform_set_pid_coeffs(platform, msg.pid_set.id, msg.pid_set.kp, msg.pid_set.ki, msg.pid_set.kd);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

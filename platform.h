@@ -20,6 +20,11 @@
 
 typedef void (*scheduled_func_t)(absolute_time_t scheduled, void *data);
 
+enum pid_controller_id {
+	PID_CONTROLLER_ID_LIFT   = 1,
+	PID_CONTROLLER_ID_EXTEND = 2,
+};
+
 struct platform_message {
 #define PLATFORM_MESSAGE_RUN               1
 #define PLATFORM_MESSAGE_VELOCITY          2
@@ -32,6 +37,7 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED  9
 #define PLATFORM_MESSAGE_IOE_SET          10
 #define PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED  11
+#define PLATFORM_MESSAGE_PID_SET          12
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -71,6 +77,10 @@ struct platform_message {
 		struct {
 			bool enabled;
 		} servo_level_enable;
+		struct {
+			enum pid_controller_id id;
+			float kp, ki, kd;
+		} pid_set;
 	};
 };
 
@@ -130,7 +140,7 @@ struct platform {
 	enum boom_extend_state boom_extend_state;
 	enum boom_lift_state boom_lift_state;
 
-	struct fcontroller boom_lift_pos_controller;
+	struct fcontroller boom_lift_controller;
 	bool boom_lift_controller_enabled;
 
 	struct fcontroller boom_extend_pos_controller;
@@ -170,5 +180,7 @@ int platform_boom_target_controller_set_enabled(struct platform *platform, bool 
 int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val);
 
 int platform_servo_level(struct platform *platform, bool enabled);
+
+int platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id, float kp, float ki, float kd);
 
 #endif /* __PLATFORM_H__ */
