@@ -41,6 +41,8 @@
 #define I2C_AUX_PIN_SDA   2
 #define I2C_AUX_PIN_SCL   3
 
+static int16_t get_servo_val(int16_t angle);
+
 static struct platform_alarm_slot *__find_free_alarm_slot(struct platform *platform)
 {
 	int i;
@@ -533,6 +535,9 @@ static void platform_start_boom_homing(struct platform *platform)
 		return;
 	}
 
+	int16_t servo_val = get_servo_val(0);
+	ioe_set_pwm_duty(&platform->ioe, 1, servo_val);
+
 	platform->boom_extend_state = BOOM_EXTEND_HOME_START;
 	platform_schedule_function(platform, platform_boom_extend_home, platform, get_absolute_time());
 	platform->boom_lift_state = BOOM_LIFT_HOME_START;
@@ -615,6 +620,46 @@ static void boom_solve(struct boom_position *pos, float *angle, float *extension
 	float rads = atan2f(pos->y, pos->x);
 	*angle = rads * 180 / PI;
 	*extension = quad_solve(1, 2 * BOOM_BASE_LEN, (BOOM_BASE_LEN * BOOM_BASE_LEN) - (pos->x * pos->x) - (pos->y * pos->y));
+}
+
+// magenc value to PWM value to keep the forks level
+const int16_t fork_servo_cal[][2] = {
+	{   0, 6450 },
+	{  86, 5750 },
+	{ 161, 5100 },
+	{ 252, 4450 },
+	{ 373, 3700 },
+	{ 481, 3200 },
+	{ 586, 2650 },
+	{ 681, 2200 },
+	{ 791, 1550 },
+	{ 833, 1150 },
+};
+const unsigned int n_servo_cal = sizeof(fork_servo_cal) / sizeof(fork_servo_cal[0]);
+
+static int16_t get_servo_val(int16_t angle)
+{
+	unsigned int idx = 0;
+
+	if (angle < 0) {
+		angle = 0;
+	}
+
+	for (idx = 0; idx < n_servo_cal - 1; idx++) {
+		if (fork_servo_cal[idx + 1][0] <= angle) {
+			continue;
+		}
+
+		int16_t angle_offs = angle - fork_servo_cal[idx][0];
+		int16_t angle_diff = fork_servo_cal[idx + 1][0] - fork_servo_cal[idx][0];
+		float angle_frac = (float)angle_offs / angle_diff;
+
+		int16_t pwm_diff = fork_servo_cal[idx + 1][1] - fork_servo_cal[idx][1];
+
+		return fork_servo_cal[idx][1] + (int16_t)(pwm_diff * angle_frac);
+	}
+
+	return fork_servo_cal[n_servo_cal - 1][1];
 }
 
 #define BOOM_POS_TARGET_DELTA 2
@@ -706,22 +751,77 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);
 }
 
-static void platform_sweep_servo_run(absolute_time_t scheduled, void *data)
+static void platform_level_servo_run(absolute_time_t scheduled, void *data)
 {
 	struct platform *platform = data;
-	static uint16_t duty = 2000;
-	static const uint16_t duty_min = 2000;
-	static const uint16_t duty_max = 8000;
-	static const uint16_t duty_step = (duty_max - duty_min) / 20;
 
-	ioe_set_pwm_duty(&platform->ioe, 1, duty);
-	duty += duty_step;
-	if (duty > duty_max) {
-		duty = duty_min;
+	if (!platform->servo_level_enabled) {
+		return;
 	}
 
-	platform_schedule_function(platform, platform_sweep_servo_run,
-	                           platform, get_absolute_time() + 300000);
+	int16_t angle;
+	int ret = boom_lift_get_angle(&angle);
+	if (ret != 0) {
+		log_printf(&util_logger, "failed to get position");
+		return;
+	} else {
+		int16_t servo_val = get_servo_val(angle);
+		ioe_set_pwm_duty(&platform->ioe, 1, servo_val);
+	}
+
+	platform_schedule_function(platform, platform_level_servo_run,
+	                           platform, get_absolute_time() + 20000);
+}
+
+static void __platform_servo_level_set_enabled(struct platform *platform, bool enabled)
+{
+	if (enabled) {
+		if (platform->boom_lift_state != BOOM_LIFT_HOME_DONE) {
+			log_printf(&util_logger, "must home before enabling controller");
+			return;
+		}
+
+		if (platform->servo_level_enabled) {
+			log_printf(&util_logger, "already enabled");
+			return;
+		}
+
+		platform->servo_level_enabled = true;
+		platform_schedule_function(platform, platform_level_servo_run, platform, get_absolute_time());
+	} else {
+		platform->servo_level_enabled = false;
+		log_printf(&util_logger, "servo_level disabled");
+	}
+}
+
+int platform_servo_level(struct platform *platform, bool enabled)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED,
+		.servo_level_enable = {
+			.enabled = enabled,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_IOE_SET,
+		.ioe_set = {
+			.pin = pin,
+			.val = val,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void __platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val)
+{
+	ioe_set_pwm_duty(&platform->ioe, pin, val);
 }
 
 void platform_run(struct platform *platform) {
@@ -730,10 +830,10 @@ void platform_run(struct platform *platform) {
 		platform_update_heading(get_absolute_time(), platform);
 	}
 
-	if (platform->status & PLATFORM_STATUS_IOE_OK) {
-		platform_schedule_function(platform, platform_sweep_servo_run,
-					   platform, get_absolute_time() + 300000);
-	}
+	//if (platform->status & PLATFORM_STATUS_IOE_OK) {
+		//platform_schedule_function(platform, platform_sweep_servo_run,
+					   //platform, get_absolute_time() + 300000);
+	//}
 
 	//platform_start_boom_homing(platform);
 
@@ -769,6 +869,12 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED:
 				__platform_boom_target_controller_set_enabled(platform, msg.boom_target_enable.enabled);
+				break;
+			case PLATFORM_MESSAGE_IOE_SET:
+				__platform_ioe_set(platform, msg.ioe_set.pin, msg.ioe_set.val);
+				break;
+			case PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED:
+				__platform_servo_level_set_enabled(platform, msg.servo_level_enable.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

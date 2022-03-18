@@ -96,6 +96,14 @@ void print_count_func(absolute_time_t scheduled, void *data)
 	log_printf(&util_logger, "count: %d, %3.2f mm", count, mm);
 }
 
+void print_degrees_func(absolute_time_t scheduled, void *data)
+{
+	int16_t angle;
+	int ret = boom_lift_get_angle(&angle);
+	float degrees = boom_lift_angle_to_degrees(angle);
+	log_printf(&util_logger, "degrees:%3.2f", degrees);
+}
+
 void boom_extend_set_func(absolute_time_t scheduled, void *data)
 {
 	int8_t *val = data;
@@ -107,6 +115,10 @@ void boom_lift_set_func(absolute_time_t scheduled, void *data)
 	int8_t *val = data;
 	boom_lift_set(*val);
 }
+
+const uint16_t y_offs = 55;
+const uint16_t middle_apple_y = 180 - y_offs;
+const uint16_t middle_apple_x = 100;
 
 int main()
 {
@@ -133,6 +145,8 @@ int main()
 
 	uint8_t prev_hat = 0;
 	uint16_t btn_held = 0;
+	uint16_t pwm_val = 7000;
+	const uint16_t PWM_STEP = 50;
 
 	int8_t extend_val;
 	int8_t lift_val;
@@ -159,9 +173,11 @@ int main()
 				util_reboot(btn_held & (1 << BTN_BIT_START));
 			}
 
+			/*
 			int8_t linear = clamp8(-ev.ly);
 			int8_t rot = clamp8(-ev.rx);
 			platform_set_velocity(platform, linear, rot);
+			*/
 
 			if (ev.hat == 0 && prev_hat != 0) {
 				extend_val = 0;
@@ -170,24 +186,40 @@ int main()
 				platform_run_function(platform, boom_lift_set_func, &lift_val);
 			}
 
-			if (ev.hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
-				extend_val = 127;
-				platform_run_function(platform, boom_extend_set_func, &extend_val);
-			}
+			if (btn_held & (1 << BTN_BIT_R1)) {
+				if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
+					pwm_val += PWM_STEP;
+					platform_ioe_set(platform, 1, pwm_val);
+					log_printf(&util_logger, "pwm: %d", pwm_val);
+					platform_run_function(platform, print_degrees_func, NULL);
+				}
 
-			if (ev.hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
-				extend_val = -127;
-				platform_run_function(platform, boom_extend_set_func, &extend_val);
-			}
+				if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
+					pwm_val -= PWM_STEP;
+					platform_ioe_set(platform, 1, pwm_val);
+					log_printf(&util_logger, "pwm: %d", pwm_val);
+					platform_run_function(platform, print_degrees_func, NULL);
+				}
+			} else {
+				if (ev.hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
+					extend_val = 127;
+					platform_run_function(platform, boom_extend_set_func, &extend_val);
+				}
 
-			if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
-				lift_val = 127;
-				platform_run_function(platform, boom_lift_set_func, &lift_val);
-			}
+				if (ev.hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
+					extend_val = -127;
+					platform_run_function(platform, boom_extend_set_func, &extend_val);
+				}
 
-			if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
-				lift_val = -127;
-				platform_run_function(platform, boom_lift_set_func, &lift_val);
+				if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
+					lift_val = 127;
+					platform_run_function(platform, boom_lift_set_func, &lift_val);
+				}
+
+				if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
+					lift_val = -127;
+					platform_run_function(platform, boom_lift_set_func, &lift_val);
+				}
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_X)) {
@@ -197,37 +229,37 @@ int main()
 			if (ev.btn_down & (1 << BTN_BIT_Y)) {
 				//platform_boom_lift_controller_set_enabled(platform, true);
 				//platform_boom_extend_controller_set_enabled(platform, true);
-				platform_boom_target_controller_set_enabled(platform, true);
+				//platform_boom_target_controller_set_enabled(platform, true);
+				platform_servo_level(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_A)) {
 				//platform_boom_lift_controller_set_enabled(platform, false);
 				//platform_boom_extend_controller_set_enabled(platform, false);
 				platform_boom_target_controller_set_enabled(platform, false);
+				platform_servo_level(platform, false);
 			}
 
+			/*
 			if (ev.btn_down & (1 << BTN_BIT_R1)) {
 				//platform_boom_lift_controller_set(platform, 60);
 				platform_boom_target_controller_set(platform, 50, 80);
 				platform_boom_target_controller_set_enabled(platform, true);
 			}
+			*/
 
 			if (ev.btn_down & (1 << BTN_BIT_L1)) {
 				//platform_boom_lift_controller_set(platform, 0);
-				platform_boom_target_controller_set(platform, 50, -20);
+				platform_boom_target_controller_set(platform, middle_apple_x, middle_apple_y);
 				platform_boom_target_controller_set_enabled(platform, true);
-			}
-
-			if (ev.btn_down & (1 << BTN_BIT_R2)) {
-				//platform_boom_extend_controller_set(platform, 60);
-				platform_boom_target_controller_set(platform, 25, 80);
-				platform_boom_target_controller_set_enabled(platform, true);
+				platform_servo_level(platform, true);
 			}
 
 			if (ev.btn_down & (1 << BTN_BIT_L2)) {
-				//platform_boom_extend_controller_set(platform, 100);
-				platform_boom_target_controller_set(platform, 25, -20);
+				//platform_boom_extend_controller_set(platform, 60);
+				platform_boom_target_controller_set(platform, 20, middle_apple_y);
 				platform_boom_target_controller_set_enabled(platform, true);
+				platform_servo_level(platform, true);
 			}
 
 			prev_hat = ev.hat;

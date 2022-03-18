@@ -30,6 +30,8 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED  7
 #define PLATFORM_MESSAGE_BOOM_TARGET_SET   8
 #define PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED  9
+#define PLATFORM_MESSAGE_IOE_SET          10
+#define PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED  11
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -61,6 +63,14 @@ struct platform_message {
 		struct {
 			bool enabled;
 		} boom_target_enable;
+		struct {
+			uint8_t pin;
+			uint8_t pad;
+			uint16_t val;
+		} ioe_set;
+		struct {
+			bool enabled;
+		} servo_level_enable;
 	};
 };
 
@@ -128,6 +138,8 @@ struct platform {
 
 	struct boom_position boom_pos_target;
 	bool boom_target_controller_enabled;
+
+	bool servo_level_enabled;
 };
 
 int platform_init(struct platform *platform);
@@ -154,5 +166,9 @@ int platform_run_function(struct platform *platform, scheduled_func_t func, void
 
 int platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm);
 int platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled);
+
+int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val);
+
+int platform_servo_level(struct platform *platform, bool enabled);
 
 #endif /* __PLATFORM_H__ */
