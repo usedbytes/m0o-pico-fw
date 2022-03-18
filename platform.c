@@ -21,8 +21,9 @@
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000
 
-#define BOOM_LIFT_CONTROLLER_TICK 10000
-#define BOOM_EXTEND_CONTROLLER_TICK 10000
+#define BOOM_LIFT_CONTROLLER_TICK 5000
+#define BOOM_EXTEND_CONTROLLER_TICK 5000
+#define BOOM_SERVO_CONTROLLER_TICK 20000
 
 #define BNO055_ADDR 0x28
 
@@ -314,7 +315,7 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	gpio_pull_up(I2C_MAIN_PIN_SDA);
 	gpio_pull_up(I2C_MAIN_PIN_SCL);
 
-	i2c_bus_init(&platform->i2c_aux, I2C_AUX_BUS, 100000);
+	i2c_bus_init(&platform->i2c_aux, I2C_AUX_BUS, 500000);
 	gpio_set_function(I2C_AUX_PIN_SDA, GPIO_FUNC_I2C);
 	gpio_set_function(I2C_AUX_PIN_SCL, GPIO_FUNC_I2C);
 	gpio_pull_up(I2C_AUX_PIN_SDA);
@@ -662,7 +663,7 @@ static int16_t get_servo_val(int16_t angle)
 
 #define BOOM_POS_TARGET_DELTA 2
 #define BOOM_POS_TARGET_MAX_SEGMENT 20
-#define BOOM_TARGET_CONTROLLER_TICK 100000
+#define BOOM_TARGET_CONTROLLER_TICK 10000
 static void platform_boom_target_controller_run(absolute_time_t scheduled, void *data)
 {
 	struct platform *platform = data;
@@ -768,7 +769,7 @@ static void platform_level_servo_run(absolute_time_t scheduled, void *data)
 	}
 
 	platform_schedule_function(platform, platform_level_servo_run,
-	                           platform, get_absolute_time() + 20000);
+	                           platform, get_absolute_time() + BOOM_SERVO_CONTROLLER_TICK);
 }
 
 static void __platform_servo_level_set_enabled(struct platform *platform, bool enabled)
@@ -785,9 +786,11 @@ static void __platform_servo_level_set_enabled(struct platform *platform, bool e
 		}
 
 		platform->servo_level_enabled = true;
+		ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
 		platform_schedule_function(platform, platform_level_servo_run, platform, get_absolute_time());
 	} else {
 		platform->servo_level_enabled = false;
+		ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_OD);
 		log_printf(&util_logger, "servo_level disabled");
 	}
 }
