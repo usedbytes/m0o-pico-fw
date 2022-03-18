@@ -3,6 +3,8 @@
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
+#include <math.h>
+
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 #include "pico/stdlib.h"
@@ -34,7 +36,7 @@
 #define BOOM_LIFT_LIMIT_PIN     22
 #define BOOM_LIFT_RAISE_DIR      1
 #define BOOM_LIFT_LOWER_DIR     -1
-#define BOOM_LIFT_HOME_OFFSET   10.0 // Mostly a guesstimate
+#define BOOM_LIFT_HOME_OFFSET   ((10.0 * M_PI) / 180.0) // Mostly a guesstimate
 
 #define AS5600_ADDR 0x36
 
@@ -227,9 +229,19 @@ float boom_lift_angle_to_degrees(int16_t angle)
 	return (angle * 90.0 / 1024.0) - BOOM_LIFT_HOME_OFFSET;
 }
 
+float boom_lift_angle_to_radians(int16_t angle)
+{
+	return (angle * M_PI / 2048.0) - BOOM_LIFT_HOME_OFFSET;
+}
+
 int16_t boom_lift_degrees_to_angle(float degrees)
 {
 	return (degrees + BOOM_LIFT_HOME_OFFSET) * 1024.0 / 90.0;
+}
+
+int16_t boom_lift_radians_to_angle(float radians)
+{
+	return (radians + BOOM_LIFT_HOME_OFFSET) * 2048.0 / M_PI;
 }
 
 int boom_lift_reset_angle()

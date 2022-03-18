@@ -18,8 +18,6 @@
 #include "platform.h"
 #include "util.h"
 
-#define PI 3.1415926
-
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000
 
@@ -690,7 +688,7 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 	uint32_t start_time = time_us_32();
 
 	mm = boom_extend_count_to_mm(count);
-	radians = d2r(boom_lift_angle_to_degrees(angle));
+	radians = boom_lift_angle_to_radians(angle);
 
 	struct point p = forward_kinematics(radians, mm);
 
@@ -712,7 +710,7 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 	struct m2 j_inv = m2_inverse(&j);
 	struct v2 q_dot = m2_multvect(&j_inv, &vec);
 
-	int16_t new_angle = boom_lift_degrees_to_angle(r2d(radians + (q_dot.a * 0.2)));
+	int16_t new_angle = boom_lift_radians_to_angle(radians + (q_dot.a * 0.2));
 	int16_t new_count = boom_extend_mm_to_count(mm + (q_dot.b * 0.2));
 
 	uint32_t end_time = time_us_32();

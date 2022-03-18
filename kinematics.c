@@ -17,16 +17,6 @@ struct point point_sub(struct point a, struct point b)
 	};
 }
 
-float d2r(float degrees)
-{
-	return degrees * M_PI / 180.0;
-}
-
-float r2d(float radians)
-{
-	return radians * 180.0 / M_PI;
-}
-
 struct point forward_kinematics(float q1, float q2)
 {
 	float x = (q2 + 248.0)*cosf(q1) + 28.5518868536033*sinf(q1) + 35.2722182146761*cosf(q1) - 263.7;

@@ -19,6 +19,9 @@ int boom_lift_reset_angle();
 float boom_lift_angle_to_degrees(int16_t angle);
 int16_t boom_lift_degrees_to_angle(float degrees);
 
+float boom_lift_angle_to_radians(int16_t angle);
+int16_t boom_lift_radians_to_angle(float radians);
+
 void boom_init(struct i2c_bus *i2c);
 
 int16_t boom_update_count();

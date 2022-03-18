@@ -7,10 +7,6 @@ float point_magnitude(struct point p);
 
 struct point point_sub(struct point a, struct point b);
 
-float d2r(float degrees);
-
-float r2d(float radians);
-
 struct point forward_kinematics(float q1, float q2);
 
 struct m2 {
