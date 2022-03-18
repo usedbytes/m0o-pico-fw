@@ -42,10 +42,4 @@ struct input_event {
 	uint8_t flags;
 };
 
-void input_init();
-void input_get_event_blocking(struct input_event *event);
-bool input_try_get_event(struct input_event *event);
-
-void input_send_dummy_event();
-
 #endif /* __INPUT_H__ */

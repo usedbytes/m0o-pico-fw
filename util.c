@@ -20,6 +20,7 @@
 #define RSP_SYNC_APP (('R' << 0) | ('B' << 8) | ('N' << 16) | ('D' << 24))
 
 struct log_buffer util_logger;
+queue_t *control_queue;
 
 static uint32_t handle_sync(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out);
 static uint32_t size_logs(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out);
@@ -157,8 +158,35 @@ static uint32_t handle_read(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_
 	return COMM_RSP_OK;
 }
 
-
-void util_init(void)
+void util_init(queue_t *control_event_queue)
 {
 	log_init(&util_logger);
+	control_queue = control_event_queue;
+}
+
+void control_event_send(enum control_event_type type, void *body, size_t body_size)
+{
+	struct control_event ev;
+	hard_assert(body_size <= sizeof(ev.body_pad));
+	ev.type = type;
+	memcpy(&ev.body_pad, body, body_size);
+
+	if (!queue_try_add(control_queue, &ev)) {
+		log_printf(&util_logger, "control event (type %d) dropped", type);
+	}
+}
+
+void control_event_get_blocking(struct control_event *event)
+{
+	queue_remove_blocking(control_queue, event);
+}
+
+bool control_event_try_get(struct control_event *event)
+{
+	return queue_try_remove(control_queue, event);
+}
+
+void control_event_send_dummy()
+{
+	control_event_send(CONTROL_EVENT_TYPE_DUMMY, NULL, 0);
 }

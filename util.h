@@ -6,6 +6,8 @@
 #ifndef __UTIL_H__
 #define __UTIL_H__
 
+#include "pico/util/queue.h"
+
 #include "comm.h"
 #include "log.h"
 
@@ -21,7 +23,7 @@ extern const struct comm_command util_read_cmd;
 
 extern struct log_buffer util_logger;
 
-void util_init(void);
+void util_init(queue_t *control_event_queue);
 void util_reboot(bool to_bootloader);
 
 static inline int8_t clamp8(int16_t value) {
@@ -33,5 +35,22 @@ static inline int8_t clamp8(int16_t value) {
 
         return value;
 }
+
+enum control_event_type {
+	CONTROL_EVENT_TYPE_INPUT = 1,
+	CONTROL_EVENT_TYPE_DUMMY,
+};
+
+struct control_event {
+	enum control_event_type type;
+	union {
+		uint64_t body_pad[2];
+	};
+};
+
+void control_event_send(enum control_event_type type, void *body, size_t body_size);
+void control_event_get_blocking(struct control_event *event);
+bool control_event_try_get(struct control_event *event);
+void control_event_send_dummy();
 
 #endif /* __UTIL_H__ */

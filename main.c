@@ -18,6 +18,8 @@
 #include "platform.h"
 #include "util.h"
 
+#define CONTROL_QUEUE_LENGTH 32
+
 // This list is ordered to try and put the most frequent messages near the start
 const struct comm_command *const cmds[] = {
 	&input_cmd,
@@ -78,8 +80,7 @@ static void get_heading(struct platform *platform, struct heading_result *out)
 }
 
 static int64_t __timer_dummy_event_cb(alarm_id_t id, void *user_data) {
-	input_send_dummy_event();
-
+	control_event_send_dummy();
 	return 0;
 }
 
@@ -124,13 +125,13 @@ int main()
 {
 	struct platform *platform;
 	uint32_t platform_status;
+	queue_t control_queue;
+
+	queue_init(&control_queue, sizeof(struct control_event), CONTROL_QUEUE_LENGTH);
+	util_init(&control_queue);
 
 	gpio_init(PICO_DEFAULT_LED_PIN);
 	gpio_set_dir(PICO_DEFAULT_LED_PIN, GPIO_OUT);
-
-	input_init();
-	util_init();
-	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
 	// Start platform thread
 	multicore_launch_core1(core1_main);
@@ -139,7 +140,10 @@ int main()
 
 	log_printf(&util_logger, "platform_status: 0x%08x", platform_status);
 
-	struct input_event ev;
+	// Only register comms after everything is initialised
+	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
+
+	struct control_event ev;
 
 	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
 
@@ -150,120 +154,125 @@ int main()
 
 	int8_t extend_val;
 	int8_t lift_val;
+
+	struct input_event *iev;
 	while (1) {
-		input_get_event_blocking(&ev);
+		control_event_get_blocking(&ev);
 		do {
-			if (ev.flags & INPUT_FLAG_DUMMY) {
-				continue;
-			}
+			switch (ev.type) {
+			case CONTROL_EVENT_TYPE_DUMMY:
+				break;
+			case CONTROL_EVENT_TYPE_INPUT:
+				iev = (struct input_event *)&ev.body_pad;
+				log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
+					   iev->lx, iev->ly, iev->rx, iev->ry, iev->hat, iev->btn_down, iev->btn_up);
 
-			log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
-			           ev.lx, ev.ly, ev.rx, ev.ry, ev.hat, ev.btn_down, ev.btn_up);
+				btn_held |= iev->btn_down;
+				btn_held &= ~iev->btn_up;
 
-			btn_held |= ev.btn_down;
-			btn_held &= ~ev.btn_up;
-
-			if (ev.btn_down) {
-				gpio_put(PICO_DEFAULT_LED_PIN, 1);
-			} else {
-				gpio_put(PICO_DEFAULT_LED_PIN, 0);
-			}
-
-			if (ev.btn_up & (1 << BTN_BIT_SELECT)) {
-				util_reboot(btn_held & (1 << BTN_BIT_START));
-			}
-
-			/*
-			int8_t linear = clamp8(-ev.ly);
-			int8_t rot = clamp8(-ev.rx);
-			platform_set_velocity(platform, linear, rot);
-			*/
-
-			if (ev.hat == 0 && prev_hat != 0) {
-				extend_val = 0;
-				lift_val = 0;
-				platform_run_function(platform, boom_extend_set_func, &extend_val);
-				platform_run_function(platform, boom_lift_set_func, &lift_val);
-			}
-
-			if (btn_held & (1 << BTN_BIT_R1)) {
-				if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
-					pwm_val += PWM_STEP;
-					platform_ioe_set(platform, 1, pwm_val);
-					log_printf(&util_logger, "pwm: %d", pwm_val);
-					platform_run_function(platform, print_degrees_func, NULL);
+				if (iev->btn_down) {
+					gpio_put(PICO_DEFAULT_LED_PIN, 1);
+				} else {
+					gpio_put(PICO_DEFAULT_LED_PIN, 0);
 				}
 
-				if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
-					pwm_val -= PWM_STEP;
-					platform_ioe_set(platform, 1, pwm_val);
-					log_printf(&util_logger, "pwm: %d", pwm_val);
-					platform_run_function(platform, print_degrees_func, NULL);
+				if (iev->btn_up & (1 << BTN_BIT_SELECT)) {
+					util_reboot(btn_held & (1 << BTN_BIT_START));
 				}
-			} else {
-				if (ev.hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
-					extend_val = 127;
+
+				/*
+				int8_t linear = clamp8(-iev->ly);
+				int8_t rot = clamp8(-iev->rx);
+				platform_set_velocity(platform, linear, rot);
+				*/
+
+				if (iev->hat == 0 && prev_hat != 0) {
+					extend_val = 0;
+					lift_val = 0;
 					platform_run_function(platform, boom_extend_set_func, &extend_val);
-				}
-
-				if (ev.hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
-					extend_val = -127;
-					platform_run_function(platform, boom_extend_set_func, &extend_val);
-				}
-
-				if (ev.hat & HAT_UP && !(prev_hat & HAT_UP)) {
-					lift_val = 127;
 					platform_run_function(platform, boom_lift_set_func, &lift_val);
 				}
 
-				if (ev.hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
-					lift_val = -127;
-					platform_run_function(platform, boom_lift_set_func, &lift_val);
+				if (btn_held & (1 << BTN_BIT_R1)) {
+					if (iev->hat & HAT_UP && !(prev_hat & HAT_UP)) {
+						pwm_val += PWM_STEP;
+						platform_ioe_set(platform, 1, pwm_val);
+						log_printf(&util_logger, "pwm: %d", pwm_val);
+						platform_run_function(platform, print_degrees_func, NULL);
+					}
+
+					if (iev->hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
+						pwm_val -= PWM_STEP;
+						platform_ioe_set(platform, 1, pwm_val);
+						log_printf(&util_logger, "pwm: %d", pwm_val);
+						platform_run_function(platform, print_degrees_func, NULL);
+					}
+				} else {
+					if (iev->hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
+						extend_val = 127;
+						platform_run_function(platform, boom_extend_set_func, &extend_val);
+					}
+
+					if (iev->hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
+						extend_val = -127;
+						platform_run_function(platform, boom_extend_set_func, &extend_val);
+					}
+
+					if (iev->hat & HAT_UP && !(prev_hat & HAT_UP)) {
+						lift_val = 127;
+						platform_run_function(platform, boom_lift_set_func, &lift_val);
+					}
+
+					if (iev->hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
+						lift_val = -127;
+						platform_run_function(platform, boom_lift_set_func, &lift_val);
+					}
 				}
-			}
 
-			if (ev.btn_down & (1 << BTN_BIT_X)) {
-				platform_boom_home(platform);
-			}
+				if (iev->btn_down & (1 << BTN_BIT_X)) {
+					platform_boom_home(platform);
+				}
 
-			if (ev.btn_down & (1 << BTN_BIT_Y)) {
-				//platform_boom_lift_controller_set_enabled(platform, true);
-				//platform_boom_extend_controller_set_enabled(platform, true);
-				//platform_boom_target_controller_set_enabled(platform, true);
-				platform_servo_level(platform, true);
-			}
+				if (iev->btn_down & (1 << BTN_BIT_Y)) {
+					//platform_boom_lift_controller_set_enabled(platform, true);
+					//platform_boom_extend_controller_set_enabled(platform, true);
+					//platform_boom_target_controller_set_enabled(platform, true);
+					platform_servo_level(platform, true);
+				}
 
-			if (ev.btn_down & (1 << BTN_BIT_A)) {
-				//platform_boom_lift_controller_set_enabled(platform, false);
-				//platform_boom_extend_controller_set_enabled(platform, false);
-				platform_boom_target_controller_set_enabled(platform, false);
-				platform_servo_level(platform, false);
-			}
+				if (iev->btn_down & (1 << BTN_BIT_A)) {
+					//platform_boom_lift_controller_set_enabled(platform, false);
+					//platform_boom_extend_controller_set_enabled(platform, false);
+					platform_boom_target_controller_set_enabled(platform, false);
+					platform_servo_level(platform, false);
+				}
 
-			/*
-			if (ev.btn_down & (1 << BTN_BIT_R1)) {
-				//platform_boom_lift_controller_set(platform, 60);
-				platform_boom_target_controller_set(platform, 50, 80);
-				platform_boom_target_controller_set_enabled(platform, true);
-			}
-			*/
+				/*
+				if (iev->btn_down & (1 << BTN_BIT_R1)) {
+					//platform_boom_lift_controller_set(platform, 60);
+					platform_boom_target_controller_set(platform, 50, 80);
+					platform_boom_target_controller_set_enabled(platform, true);
+				}
+				*/
 
-			if (ev.btn_down & (1 << BTN_BIT_L1)) {
-				//platform_boom_lift_controller_set(platform, 0);
-				platform_boom_target_controller_set(platform, middle_apple_x, middle_apple_y);
-				platform_boom_target_controller_set_enabled(platform, true);
-				platform_servo_level(platform, true);
-			}
+				if (iev->btn_down & (1 << BTN_BIT_L1)) {
+					//platform_boom_lift_controller_set(platform, 0);
+					platform_boom_target_controller_set(platform, middle_apple_x, middle_apple_y);
+					platform_boom_target_controller_set_enabled(platform, true);
+					platform_servo_level(platform, true);
+				}
 
-			if (ev.btn_down & (1 << BTN_BIT_L2)) {
-				//platform_boom_extend_controller_set(platform, 60);
-				platform_boom_target_controller_set(platform, 20, middle_apple_y);
-				platform_boom_target_controller_set_enabled(platform, true);
-				platform_servo_level(platform, true);
-			}
+				if (iev->btn_down & (1 << BTN_BIT_L2)) {
+					//platform_boom_extend_controller_set(platform, 60);
+					platform_boom_target_controller_set(platform, 20, middle_apple_y);
+					platform_boom_target_controller_set_enabled(platform, true);
+					platform_servo_level(platform, true);
+				}
 
-			prev_hat = ev.hat;
-		} while (input_try_get_event(&ev));
+				prev_hat = iev->hat;
+				break;
+			}
+		} while (control_event_try_get(&ev));
 
 		/*
 		struct heading_result heading;

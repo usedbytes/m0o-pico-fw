@@ -7,14 +7,11 @@
 #include <stdint.h>
 #include <string.h>
 
-#include "pico/util/queue.h"
-
 #include "input.h"
 #include "log.h"
 #include "util.h"
 
 #define CMD_INPUT    (('I' << 0) | ('N' << 8) | ('P' << 16) | ('T' << 24))
-#define INPUT_QUEUE_LENGTH 32
 
 const uint8_t hat_pos_to_dirs[] = {
 	[0] = HAT_UP,
@@ -37,7 +34,7 @@ struct bt_hid_state {
 	uint8_t pad;
 };
 
-queue_t input_queue;
+queue_t *event_queue;
 
 static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *resp_data_len_out)
 {
@@ -72,9 +69,7 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 		ev.hat = hat_pos_to_dirs[state.hat];
 	}
 
-	if (!queue_try_add(&input_queue, &ev)) {
-		log_printf(&util_logger, "input event dropped");
-	}
+	control_event_send(CONTROL_EVENT_TYPE_INPUT, &ev, sizeof(ev));
 
 	return COMM_RSP_OK;
 }
@@ -86,29 +81,3 @@ const struct comm_command input_cmd = {
 	.size = &size_input,
 	.handle = &handle_input,
 };
-
-void input_init()
-{
-	queue_init(&input_queue, sizeof(struct input_event), INPUT_QUEUE_LENGTH);
-}
-
-void input_get_event_blocking(struct input_event *event)
-{
-	queue_remove_blocking(&input_queue, event);
-}
-
-bool input_try_get_event(struct input_event *event)
-{
-	return queue_try_remove(&input_queue, event);
-}
-
-void input_send_dummy_event()
-{
-	struct input_event ev = {
-		.flags = INPUT_FLAG_DUMMY,
-	};
-
-	if (!queue_try_add(&input_queue, &ev)) {
-		log_printf(&util_logger, "dummy input event dropped");
-	}
-}
