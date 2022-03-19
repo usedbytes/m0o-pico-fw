@@ -180,12 +180,6 @@ int platform_init(struct platform *platform);
 
 void platform_run(struct platform *platform);
 
-/* TODO
-void platform_set_boom(struct platform *platform, uint16_t height, uint16_t extension);
-void platform_drive_heading(struct platform *platform, int8_t linear_speed, int16_t heading);
-void platform_stop(struct platform *platform);
-*/
-
 int platform_set_velocity(struct platform *platform, int8_t linear, int8_t angular);
 int platform_boom_home(struct platform *platform);
 

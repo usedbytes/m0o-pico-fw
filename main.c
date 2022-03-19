@@ -153,39 +153,6 @@ static int64_t __timer_dummy_event_cb(alarm_id_t id, void *user_data) {
 	return 0;
 }
 
-void reset_count_func(absolute_time_t scheduled, void *data)
-{
-	log_printf(&util_logger, "Reset count");
-	boom_reset_count();
-}
-
-void print_count_func(absolute_time_t scheduled, void *data)
-{
-	int16_t count = boom_update_count();
-	float mm = boom_extend_count_to_mm(count);
-	log_printf(&util_logger, "count: %d, %3.2f mm", count, mm);
-}
-
-void print_degrees_func(absolute_time_t scheduled, void *data)
-{
-	int16_t angle;
-	int ret = boom_lift_get_angle(&angle);
-	float degrees = boom_lift_angle_to_degrees(angle);
-	log_printf(&util_logger, "degrees:%3.2f", degrees);
-}
-
-void boom_extend_set_func(absolute_time_t scheduled, void *data)
-{
-	int8_t *val = data;
-	boom_extend_set(*val);
-}
-
-void boom_lift_set_func(absolute_time_t scheduled, void *data)
-{
-	int8_t *val = data;
-	boom_lift_set(*val);
-}
-
 const uint16_t y_offs = 55;
 const uint16_t middle_apple_y = 180 - y_offs;
 const uint16_t middle_apple_x = 100;

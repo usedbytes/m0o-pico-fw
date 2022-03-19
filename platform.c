@@ -352,13 +352,11 @@ int platform_init(struct platform *platform /*, platform_config*/)
 		platform->status |= PLATFORM_STATUS_IOE_PRESENT | PLATFORM_STATUS_IOE_OK;
 
 		ret = ioe_set_pwm_period(&platform->ioe, 60000);
-		log_printf(&util_logger, "ioe_set_pwm_period: %d\n", ret);
-
-		ioe_set_pwm_divider(&platform->ioe, IOE_PWM_DIVIDER_8);
-		log_printf(&util_logger, "ioe_set_pwm_divider: %d\n", ret);
-
-		ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
-		log_printf(&util_logger, "ioe_set_pin_mode: %d\n", ret);
+		ret |= ioe_set_pwm_divider(&platform->ioe, IOE_PWM_DIVIDER_8);
+		ret |= ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
+		if (ret) {
+			platform->status &= ~PLATFORM_STATUS_IOE_OK;
+		}
 	}
 
 	chassis_init(&platform->chassis, CHASSIS_PIN_L_A, CHASSIS_PIN_R_A);
@@ -577,36 +575,22 @@ int platform_boom_home(struct platform *platform)
 	return platform_send_message(platform, &msg);
 }
 
-static float max(float a, float b)
-{
-	return a > b ? a : b;
-}
-
-static float quad_solve(float a, float b, float c)
-{
-	float x1 = ((-b) + sqrtf((b * b) - (4 * a * c))) / 2 * a;
-	float x2 = ((-b) - sqrtf((b * b) - (4 * a * c))) / 2 * a;
-
-	return max(x1, x2);
-}
-
 // magenc value to PWM value to keep the forks level
-const int16_t fork_servo_cal[][2] = {
-	{   0, 6450 },
-	{  86, 5750 },
-	{ 161, 5100 },
-	{ 252, 4450 },
-	{ 373, 3700 },
-	{ 481, 3200 },
-	{ 586, 2650 },
-	{ 681, 2200 },
-	{ 791, 1550 },
-	{ 833, 1150 },
-};
-const unsigned int n_servo_cal = sizeof(fork_servo_cal) / sizeof(fork_servo_cal[0]);
-
 static int16_t get_servo_val(int16_t angle)
 {
+	static const int16_t fork_servo_cal[][2] = {
+		{   0, 6450 },
+		{  86, 5750 },
+		{ 161, 5100 },
+		{ 252, 4450 },
+		{ 373, 3700 },
+		{ 481, 3200 },
+		{ 586, 2650 },
+		{ 681, 2200 },
+		{ 791, 1550 },
+		{ 833, 1150 },
+	};
+	static const unsigned int n_servo_cal = sizeof(fork_servo_cal) / sizeof(fork_servo_cal[0]);
 	unsigned int idx = 0;
 
 	if (angle < 0) {
@@ -630,20 +614,7 @@ static int16_t get_servo_val(int16_t angle)
 	return fork_servo_cal[n_servo_cal - 1][1];
 }
 
-float clamp_abs(float v, float abs)
-{
-	if (v > abs) {
-		return abs;
-	}
-
-	if (v < -abs) {
-		return -abs;
-	}
-
-	return v;
-}
-
-float clamp(float v, float min, float max)
+static float clamp(float v, float min, float max)
 {
 	if (v > max) {
 		return max;
