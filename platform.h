@@ -42,8 +42,6 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_SET_ENABLED  5
 #define PLATFORM_MESSAGE_BOOM_EXTEND_SET   6
 #define PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED  7
-#define PLATFORM_MESSAGE_BOOM_TARGET_SET   8
-#define PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED  9
 #define PLATFORM_MESSAGE_IOE_SET          10
 #define PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED  11
 #define PLATFORM_MESSAGE_PID_SET          12
@@ -77,13 +75,6 @@ struct platform_message {
 		struct {
 			bool enabled;
 		} boom_extend_enable;
-		struct {
-			int16_t x_mm;
-			int16_t y_mm;
-		} boom_target_set;
-		struct {
-			bool enabled;
-		} boom_target_enable;
 		struct {
 			uint8_t pin;
 			uint8_t pad;
@@ -170,9 +161,6 @@ struct platform {
 
 	struct fcontroller boom_extend_pos_controller;
 	bool boom_extend_controller_enabled;
-
-	struct v2 boom_pos_target;
-	bool boom_target_controller_enabled;
 
 	bool servo_level_enabled;
 

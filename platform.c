@@ -562,54 +562,6 @@ int platform_boom_home(struct platform *platform)
 	return platform_send_message(platform, &msg);
 }
 
-static void __platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm)
-{
-	platform->boom_pos_target.x = x_mm;
-	platform->boom_pos_target.y = y_mm;
-}
-
-int platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm)
-{
-	struct platform_message msg = {
-		.type = PLATFORM_MESSAGE_BOOM_TARGET_SET,
-		.boom_target_set = {
-			.x_mm = x_mm,
-			.y_mm = y_mm,
-		},
-	};
-
-	return platform_send_message(platform, &msg);
-}
-
-static void platform_boom_target_controller_run(absolute_time_t scheduled, void *data);
-
-static void __platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled)
-{
-	if (enabled) {
-		__platform_boom_extend_controller_set_enabled(platform, true);
-		__platform_boom_lift_controller_set_enabled(platform, true);
-
-		platform->boom_target_controller_enabled = true;
-		platform_schedule_function(platform, platform_boom_target_controller_run, platform, get_absolute_time());
-	} else {
-		platform->boom_target_controller_enabled = false;
-		__platform_boom_lift_controller_set_enabled(platform, false);
-		__platform_boom_extend_controller_set_enabled(platform, false);
-	}
-}
-
-int platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled)
-{
-	struct platform_message msg = {
-		.type = PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED,
-		.boom_target_enable = {
-			.enabled = enabled,
-		},
-	};
-
-	return platform_send_message(platform, &msg);
-}
-
 static float max(float a, float b)
 {
 	return a > b ? a : b;
@@ -721,74 +673,6 @@ int platform_boom_update_position(struct platform *platform)
 
 	return platform_send_message(platform, &msg);
 }
-
-static void platform_boom_target_controller_run(absolute_time_t scheduled, void *data)
-{
-	struct platform *platform = data;
-
-	if (!platform->boom_target_controller_enabled) {
-		return;
-	}
-
-	float radians;
-	float mm;
-
-	int16_t count = boom_update_count();
-	int16_t angle;
-	int ret = boom_lift_get_angle(&angle);
-	if (ret != 0) {
-		log_printf(&util_logger, "failed to get position");
-		__platform_boom_target_controller_set_enabled(platform, false);
-		return;
-	}
-
-	// Skip the i2c traffic for timing purposes
-	// At  100kHz it adds 500 us!
-	absolute_time_t now = get_absolute_time();
-	uint32_t start_time = to_us_since_boot(now);
-
-	mm = boom_extend_count_to_mm(count);
-	radians = boom_lift_angle_to_radians(angle);
-
-	struct v2 p = forward_kinematics(radians, mm);
-	struct v2 dp = vec2_sub(platform->boom_pos_target, p);
-
-	platform->boom_timestamp = now;
-	platform->boom_current = p;
-
-	float distance = vec2_magnitude(dp);
-	if (distance <= BOOM_POS_TARGET_DELTA) {
-		log_printf(&util_logger, "target reached");
-		__platform_boom_target_controller_set_enabled(platform, false);
-		return;
-	}
-
-	struct m2 j = get_jacobian(radians, mm);
-	struct m2 j_inv = m2_inverse(&j);
-	struct v2 q_dot = m2_multvect(&j_inv, &dp);
-
-	float rad_step = clamp_abs(q_dot.x, 1.0 * M_PI / 180.0);
-	float mm_step = clamp_abs(q_dot.y, 20);
-
-	log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
-
-	int16_t new_angle = boom_lift_radians_to_angle(radians + rad_step);
-	int16_t new_count = boom_extend_mm_to_count(mm + mm_step);
-
-	uint32_t end_time = time_us_32();
-
-	__platform_boom_extend_controller_set(platform, new_count);
-	__platform_boom_lift_controller_set(platform, new_angle);
-
-	log_printf(&util_logger, "%d, %d -> %d, %d, took %d us", angle, count,
-			new_angle, new_count, end_time - start_time);
-	log_printf(&util_logger, "Current: %d, %d -> Target: %d, %d", (int)p.x, (int)p.y,
-			platform->boom_pos_target.x, platform->boom_pos_target.y);
-
-	platform_schedule_function(platform, platform_boom_target_controller_run,
-	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);
-}
-
 
 static void __platform_boom_trajectory_controller_set(struct platform *platform, struct v2 start, struct v2 target)
 {
@@ -1085,7 +969,6 @@ int platform_all_stop(struct platform *platform)
 static void __platform_all_stop(struct platform *platform)
 {
 	__platform_boom_trajectory_controller_set_enabled(platform, false);
-	__platform_boom_target_controller_set_enabled(platform, false);
 	__platform_boom_lift_controller_set_enabled(platform, false);
 	__platform_boom_extend_controller_set_enabled(platform, false);
 	__platform_servo_level_set_enabled(platform, false);
@@ -1157,12 +1040,6 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_EXTEND_SET_ENABLED:
 				__platform_boom_extend_controller_set_enabled(platform, msg.boom_extend_enable.enabled);
-				break;
-			case PLATFORM_MESSAGE_BOOM_TARGET_SET:
-				__platform_boom_target_controller_set(platform, msg.boom_target_set.x_mm, msg.boom_target_set.y_mm);
-				break;
-			case PLATFORM_MESSAGE_BOOM_TARGET_SET_ENABLED:
-				__platform_boom_target_controller_set_enabled(platform, msg.boom_target_enable.enabled);
 				break;
 			case PLATFORM_MESSAGE_IOE_SET:
 				__platform_ioe_set(platform, msg.ioe_set.pin, msg.ioe_set.val);
