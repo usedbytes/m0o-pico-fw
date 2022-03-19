@@ -153,16 +153,17 @@ struct platform {
 	uint32_t heading_update_us;
 	int16_t heading;
 
+#define CONTROLLER_BOOM_LIFT       (1 << 0)
+#define CONTROLLER_BOOM_EXTEND     (1 << 1)
+#define CONTROLLER_BOOM_TRAJECTORY (1 << 2)
+#define CONTROLLER_BOOM_FORK_LEVEL (1 << 3)
+	uint32_t controllers_enabled;
+
 	enum boom_extend_state boom_extend_state;
 	enum boom_lift_state boom_lift_state;
 
 	struct fcontroller boom_lift_controller;
-	bool boom_lift_controller_enabled;
-
 	struct fcontroller boom_extend_pos_controller;
-	bool boom_extend_controller_enabled;
-
-	bool servo_level_enabled;
 
 	absolute_time_t boom_timestamp;
 	struct v2 boom_current;
@@ -173,7 +174,6 @@ struct platform {
 		struct v2 unit;
 		float mag;
 	} trajectory;
-	bool boom_trajectory_controller_enabled;
 };
 
 int platform_init(struct platform *platform);

@@ -47,6 +47,21 @@
 #define I2C_AUX_PIN_SDA   2
 #define I2C_AUX_PIN_SCL   3
 
+static inline bool __controllers_are_enabled(struct platform *platform, uint32_t controller_mask)
+{
+	return (platform->controllers_enabled & controller_mask) == controller_mask;
+}
+
+static inline void __controllers_set_enabled(struct platform *platform, uint32_t controller_mask)
+{
+	platform->controllers_enabled |= controller_mask;
+}
+
+static inline void __controllers_set_disabled(struct platform *platform, uint32_t controller_mask)
+{
+	platform->controllers_enabled &= ~controller_mask;
+}
+
 static int16_t get_servo_val(int16_t angle);
 
 static struct platform_alarm_slot *__find_free_alarm_slot(struct platform *platform)
@@ -394,7 +409,7 @@ static void __platform_boom_lift_controller_set_enabled(struct platform *platfor
 			return;
 		}
 
-		if (platform->boom_lift_controller_enabled) {
+		if (__controllers_are_enabled(platform, CONTROLLER_BOOM_LIFT)) {
 			log_printf(&util_logger, "already enabled");
 			return;
 		}
@@ -411,10 +426,10 @@ static void __platform_boom_lift_controller_set_enabled(struct platform *platfor
 		fcontroller_set(c, current);
 		fcontroller_reinit(c, current, 0);
 
-		platform->boom_lift_controller_enabled = true;
+		__controllers_set_enabled(platform, CONTROLLER_BOOM_LIFT);
 		platform_schedule_function(platform, platform_boom_lift_controller_run, platform, get_absolute_time());
 	} else {
-		platform->boom_lift_controller_enabled = false;
+		__controllers_set_disabled(platform, CONTROLLER_BOOM_LIFT);
 		boom_lift_set(0);
 		log_printf(&util_logger, "boom_lift_controller disabled");
 	}
@@ -435,7 +450,7 @@ int platform_boom_lift_controller_set_enabled(struct platform *platform, bool en
 static void platform_boom_lift_controller_run(absolute_time_t scheduled, void *data)
 {
 	struct platform *platform = data;
-	if (!platform->boom_lift_controller_enabled) {
+	if (!__controllers_are_enabled(platform, CONTROLLER_BOOM_LIFT)) {
 		return;
 	}
 
@@ -484,7 +499,7 @@ static void __platform_boom_extend_controller_set_enabled(struct platform *platf
 			return;
 		}
 
-		if (platform->boom_extend_controller_enabled) {
+		if (__controllers_are_enabled(platform, CONTROLLER_BOOM_EXTEND)) {
 			log_printf(&util_logger, "already enabled");
 			return;
 		}
@@ -496,10 +511,10 @@ static void __platform_boom_extend_controller_set_enabled(struct platform *platf
 		//fcontroller_set(c, current);
 		fcontroller_reinit(c, current, 0);
 
-		platform->boom_extend_controller_enabled = true;
+		__controllers_set_enabled(platform, CONTROLLER_BOOM_EXTEND);
 		platform_schedule_function(platform, platform_boom_extend_controller_run, platform, get_absolute_time());
 	} else {
-		platform->boom_extend_controller_enabled = false;
+		__controllers_set_disabled(platform, CONTROLLER_BOOM_EXTEND);
 		boom_extend_set(0);
 		log_printf(&util_logger, "boom_extend_controller disabled");
 	}
@@ -520,7 +535,7 @@ int platform_boom_extend_controller_set_enabled(struct platform *platform, bool 
 static void platform_boom_extend_controller_run(absolute_time_t scheduled, void *data)
 {
 	struct platform *platform = data;
-	if (!platform->boom_extend_controller_enabled) {
+	if (!__controllers_are_enabled(platform, CONTROLLER_BOOM_EXTEND)) {
 		return;
 	}
 
@@ -713,7 +728,7 @@ static void __platform_boom_trajectory_controller_adjust_target(struct platform 
 				vec2_add(platform->trajectory.target, amount));
 		break;
 	case TRAJECTORY_ADJUST_RELATIVE_TO_CURRENT:
-		if (!platform->boom_trajectory_controller_enabled) {
+		if (!__controllers_are_enabled(platform, CONTROLLER_BOOM_TRAJECTORY)) {
 			__platform_boom_update_position(platform);
 		}
 		__platform_boom_trajectory_controller_set(platform,
@@ -726,7 +741,7 @@ static void __platform_boom_trajectory_controller_adjust_target(struct platform 
 				amount);
 		break;
 	case TRAJECTORY_ADJUST_SET_BOTH_TO_CURRENT:
-		if (!platform->boom_trajectory_controller_enabled) {
+		if (!__controllers_are_enabled(platform, CONTROLLER_BOOM_TRAJECTORY)) {
 			__platform_boom_update_position(platform);
 		}
 		__platform_boom_trajectory_controller_set(platform,
@@ -776,15 +791,14 @@ static void __platform_boom_trajectory_controller_set_enabled(struct platform *p
 		__platform_boom_extend_controller_set_enabled(platform, true);
 		__platform_boom_lift_controller_set_enabled(platform, true);
 
-		platform->boom_trajectory_controller_enabled = true;
+		__controllers_set_enabled(platform, CONTROLLER_BOOM_TRAJECTORY);
 		platform_schedule_function(platform, platform_boom_trajectory_controller_run, platform, get_absolute_time());
 	} else {
-		platform->boom_trajectory_controller_enabled = false;
+		__controllers_set_disabled(platform, CONTROLLER_BOOM_TRAJECTORY);
 		__platform_boom_lift_controller_set_enabled(platform, false);
 		__platform_boom_extend_controller_set_enabled(platform, false);
 	}
 }
-
 
 int platform_boom_trajectory_controller_set_enabled(struct platform *platform, bool enabled)
 {
@@ -802,7 +816,7 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 {
 	struct platform *platform = data;
 
-	if (!platform->boom_trajectory_controller_enabled) {
+	if (!__controllers_are_enabled(platform, CONTROLLER_BOOM_TRAJECTORY)) {
 		return;
 	}
 
@@ -886,7 +900,7 @@ static void platform_level_servo_run(absolute_time_t scheduled, void *data)
 {
 	struct platform *platform = data;
 
-	if (!platform->servo_level_enabled) {
+	if (!__controllers_are_enabled(platform, CONTROLLER_BOOM_FORK_LEVEL)) {
 		return;
 	}
 
@@ -912,16 +926,16 @@ static void __platform_servo_level_set_enabled(struct platform *platform, bool e
 			return;
 		}
 
-		if (platform->servo_level_enabled) {
+		if (__controllers_are_enabled(platform, CONTROLLER_BOOM_FORK_LEVEL)) {
 			log_printf(&util_logger, "already enabled");
 			return;
 		}
 
-		platform->servo_level_enabled = true;
+		__controllers_set_enabled(platform, CONTROLLER_BOOM_FORK_LEVEL);
 		ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
 		platform_schedule_function(platform, platform_level_servo_run, platform, get_absolute_time());
 	} else {
-		platform->servo_level_enabled = false;
+		__controllers_set_disabled(platform, CONTROLLER_BOOM_FORK_LEVEL);
 		ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_OD);
 		log_printf(&util_logger, "servo_level disabled");
 	}
@@ -1006,13 +1020,6 @@ void platform_run(struct platform *platform) {
 	if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
 		platform_update_heading(get_absolute_time(), platform);
 	}
-
-	//if (platform->status & PLATFORM_STATUS_IOE_OK) {
-		//platform_schedule_function(platform, platform_sweep_servo_run,
-					   //platform, get_absolute_time() + 300000);
-	//}
-
-	//platform_start_boom_homing(platform);
 
 	while (1) {
 		struct platform_message msg;
