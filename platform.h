@@ -40,6 +40,8 @@ struct platform_message {
 #define PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED  11
 #define PLATFORM_MESSAGE_PID_SET          12
 #define PLATFORM_MESSAGE_BOOM_UPDATE      13
+#define PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET         14
+#define PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET_ENABLED 15
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -83,6 +85,12 @@ struct platform_message {
 			enum pid_controller_id id;
 			float kp, ki, kd;
 		} pid_set;
+		struct {
+			struct v2 start, target;
+		} trajectory;
+		struct {
+			bool enabled;
+		} trajectory_enable;
 	};
 };
 
@@ -151,6 +159,14 @@ struct platform {
 
 	absolute_time_t boom_timestamp;
 	struct v2 boom_current;
+
+	struct {
+		struct v2 start;
+		struct v2 target;
+		struct v2 unit;
+		float mag;
+	} trajectory;
+	bool boom_trajectory_controller_enabled;
 };
 
 int platform_init(struct platform *platform);
@@ -185,5 +201,8 @@ int platform_servo_level(struct platform *platform, bool enabled);
 int platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id, float kp, float ki, float kd);
 
 int platform_boom_update_position(struct platform *platform);
+
+int platform_boom_trajectory_controller_set(struct platform *platform, struct v2 start, struct v2 target);
+int platform_boom_trajectory_controller_set_enabled(struct platform *platform, bool enabled);
 
 #endif /* __PLATFORM_H__ */

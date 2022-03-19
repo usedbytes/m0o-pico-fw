@@ -29,6 +29,9 @@
 #define BOOM_POS_TARGET_MAX_SEGMENT 20
 #define BOOM_TARGET_CONTROLLER_TICK 20000
 
+#define BOOM_TRAJECTORY_CONTROLLER_TICK 50000
+#define MAX_TRAJECTORY_STEP 10
+
 #define BNO055_ADDR 0x28
 
 #define CHASSIS_PIN_L_A 14
@@ -672,6 +675,19 @@ float clamp_abs(float v, float abs)
 	return v;
 }
 
+float clamp(float v, float min, float max)
+{
+	if (v > max) {
+		return max;
+	}
+
+	if (v < min) {
+		return min;
+	}
+
+	return v;
+}
+
 static void __platform_boom_update_position(struct platform *platform)
 {
 	float radians;
@@ -770,6 +786,140 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 
 	platform_schedule_function(platform, platform_boom_target_controller_run,
 	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);
+}
+
+static void __platform_boom_trajectory_controller_set(struct platform *platform, struct v2 start, struct v2 target)
+{
+	platform->trajectory.start = start;
+	platform->trajectory.target = target;
+	platform->trajectory.mag = vec2_normalise(vec2_sub(target, start), &platform->trajectory.unit);
+}
+
+int platform_boom_trajectory_controller_set(struct platform *platform, struct v2 start, struct v2 target)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET,
+		.trajectory = {
+			.start = start,
+			.target = target,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, void *data);
+
+static void __platform_boom_trajectory_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	if (enabled) {
+		__platform_boom_extend_controller_set_enabled(platform, true);
+		__platform_boom_lift_controller_set_enabled(platform, true);
+
+		platform->boom_trajectory_controller_enabled = true;
+		platform_schedule_function(platform, platform_boom_trajectory_controller_run, platform, get_absolute_time());
+	} else {
+		platform->boom_trajectory_controller_enabled = false;
+		__platform_boom_lift_controller_set_enabled(platform, false);
+		__platform_boom_extend_controller_set_enabled(platform, false);
+	}
+}
+
+
+int platform_boom_trajectory_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET_ENABLED,
+		.trajectory_enable = {
+			.enabled = enabled,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, void *data)
+{
+	struct platform *platform = data;
+
+	if (!platform->boom_trajectory_controller_enabled) {
+		return;
+	}
+
+	float radians;
+	float mm;
+	int16_t count = boom_update_count();
+	int16_t angle;
+	int ret = boom_lift_get_angle(&angle);
+	if (ret != 0) {
+		log_printf(&util_logger, "failed to get position");
+		__platform_boom_trajectory_controller_set_enabled(platform, false);
+		return;
+	}
+
+	// Skip the i2c traffic for timing purposes
+	// At  100kHz it adds 500 us!
+	absolute_time_t now = get_absolute_time();
+	uint32_t start_time = to_us_since_boot(now);
+
+	// Find the current position
+	mm = boom_extend_count_to_mm(count);
+	radians = boom_lift_angle_to_radians(angle);
+
+	struct v2 current_pos = forward_kinematics(radians, mm);
+	struct v2 dp = vec2_sub(platform->trajectory.target, current_pos);
+
+	platform->boom_timestamp = now;
+	platform->boom_current = current_pos;
+
+	// Find out if we already arrived at the target
+	float distance = vec2_magnitude(dp);
+	if (distance <= BOOM_POS_TARGET_DELTA) {
+		log_printf(&util_logger, "trajectory target reached");
+		__platform_boom_trajectory_controller_set_enabled(platform, false);
+		return;
+	}
+
+	// Find the closest point along the trajectory
+	struct v2 current_vec = vec2_sub(current_pos, platform->trajectory.start);
+	distance = vec2_dot(current_vec, platform->trajectory.unit);
+
+	// Move a little further ahead, clamped to the target point
+	distance += MAX_TRAJECTORY_STEP;
+	distance = clamp(distance, 0.0, platform->trajectory.mag);
+
+	// Calculate the new target
+	struct v2 new_target = vec2_add(platform->trajectory.start, vec2_mul(platform->trajectory.unit, distance));
+	dp = vec2_sub(new_target, current_pos);
+
+	// Run the kinematics to get the movement vector
+	struct m2 j = get_jacobian(radians, mm);
+	struct m2 j_inv = m2_inverse(&j);
+	struct v2 q_dot = m2_multvect(&j_inv, &dp);
+
+	// TODO: This should be unnecessary now that "MAX_TRAJECTORY_STEP" is used
+	//float rad_step = clamp_abs(q_dot.x, 0.8 * M_PI / 180.0);
+	//float mm_step = clamp_abs(q_dot.y, 20);
+	float rad_step = q_dot.x;
+	float mm_step = q_dot.y;
+
+	log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
+
+	int16_t new_angle = boom_lift_radians_to_angle(radians + rad_step);
+	int16_t new_count = boom_extend_mm_to_count(mm + mm_step);
+
+	uint32_t end_time = time_us_32();
+
+	__platform_boom_extend_controller_set(platform, new_count);
+	__platform_boom_lift_controller_set(platform, new_angle);
+
+	log_printf(&util_logger, "%d, %d -> %d, %d, took %d us", angle, count,
+			new_angle, new_count, end_time - start_time);
+	log_printf(&util_logger, "Current: %d, %d -> Target: %d, %d", (int)current_pos.x, (int)current_pos.y,
+			platform->trajectory.target.x, platform->trajectory.target.y);
+
+	platform_schedule_function(platform, platform_boom_trajectory_controller_run,
+	                           platform, get_absolute_time() + BOOM_TRAJECTORY_CONTROLLER_TICK);
 }
 
 static void platform_level_servo_run(absolute_time_t scheduled, void *data)
@@ -931,6 +1081,12 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_UPDATE:
 				__platform_boom_update_position(platform);
+				break;
+			case PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET:
+				__platform_boom_trajectory_controller_set(platform, msg.trajectory.start, msg.trajectory.target);
+				break;
+			case PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET_ENABLED:
+				__platform_boom_trajectory_controller_set_enabled(platform, msg.trajectory_enable.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

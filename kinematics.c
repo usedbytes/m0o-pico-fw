@@ -28,6 +28,22 @@ struct v2 vec2_sub(struct v2 a, struct v2 b)
 	};
 }
 
+struct v2 vec2_add(struct v2 a, struct v2 b)
+{
+	return (struct v2){
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+	};
+}
+
+struct v2 vec2_mul(struct v2 a, float b)
+{
+	return (struct v2){
+		.x = a.x * b,
+		.y = a.y * b,
+	};
+}
+
 float vec2_dot(struct v2 a, struct v2 b)
 {
 	return a.x * b.x + a.y * b.y;

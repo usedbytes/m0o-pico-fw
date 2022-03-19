@@ -16,6 +16,10 @@ float vec2_normalise(struct v2 v, struct v2 *out);
 
 struct v2 vec2_sub(struct v2 a, struct v2 b);
 
+struct v2 vec2_add(struct v2 a, struct v2 b);
+
+struct v2 vec2_mul(struct v2 a, float b);
+
 float vec2_dot(struct v2 a, struct v2 b);
 
 struct v2 forward_kinematics(float q1, float q2);

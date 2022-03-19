@@ -202,6 +202,8 @@ static void handle_input_event(struct platform *platform, struct control_event *
 
 	static struct boom_result boom_res;
 
+	static struct v2 manual_start;
+
 	struct input_event *iev = (struct input_event *)&cev->body_pad;
 
 	log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
@@ -226,11 +228,15 @@ static void handle_input_event(struct platform *platform, struct control_event *
 	   platform_set_velocity(platform, linear, rot);
 	   */
 
-	if (iev->hat == 0 && prev_hat != 0) {
+	if ((iev->hat == 0) && (prev_hat != 0)) {
 		extend_val = 0;
 		lift_val = 0;
 		platform_run_function(platform, boom_extend_set_func, &extend_val);
 		platform_run_function(platform, boom_lift_set_func, &lift_val);
+
+		platform_boom_trajectory_controller_set_enabled(platform, false);
+		get_boom_position(platform, &boom_res);
+		manual_start = boom_res.pos;
 	}
 
 	if (btn_held & (1 << BTN_BIT_R1)) {
@@ -249,27 +255,27 @@ static void handle_input_event(struct platform *platform, struct control_event *
 		}
 	} else if (btn_held & (1 << BTN_BIT_L1)) {
 		if ((iev->hat & HAT_UP) && !(prev_hat & HAT_UP)) {
-			boom_res.pos.y += 5;
-			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
-			platform_boom_target_controller_set_enabled(platform, true);
+			struct v2 target = vec2_add(manual_start, (struct v2){ 0, 300 });
+			platform_boom_trajectory_controller_set(platform, manual_start, target);
+			platform_boom_trajectory_controller_set_enabled(platform, true);
 		}
 
 		if ((iev->hat & HAT_DOWN) && !(prev_hat & HAT_DOWN)) {
-			boom_res.pos.y -= 5;
-			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
-			platform_boom_target_controller_set_enabled(platform, true);
+			struct v2 target = vec2_add(manual_start, (struct v2){ 0, -300 });
+			platform_boom_trajectory_controller_set(platform, manual_start, target);
+			platform_boom_trajectory_controller_set_enabled(platform, true);
 		}
 
 		if ((iev->hat & HAT_RIGHT) && !(prev_hat & HAT_RIGHT)) {
-			boom_res.pos.x += 5;
-			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
-			platform_boom_target_controller_set_enabled(platform, true);
+			struct v2 target = vec2_add(manual_start, (struct v2){ 200, 0 });
+			platform_boom_trajectory_controller_set(platform, manual_start, target);
+			platform_boom_trajectory_controller_set_enabled(platform, true);
 		}
 
 		if ((iev->hat & HAT_LEFT) && !(prev_hat & HAT_LEFT)) {
-			boom_res.pos.x -= 5;
-			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
-			platform_boom_target_controller_set_enabled(platform, true);
+			struct v2 target = vec2_add(manual_start, (struct v2){ -200, 0 });
+			platform_boom_trajectory_controller_set(platform, manual_start, target);
+			platform_boom_trajectory_controller_set_enabled(platform, true);
 		}
 	} else {
 		if ((iev->hat & HAT_RIGHT) && !(prev_hat & HAT_RIGHT)) {
@@ -299,6 +305,7 @@ static void handle_input_event(struct platform *platform, struct control_event *
 
 	if (iev->btn_down & (1 << BTN_BIT_B)) {
 		get_boom_position(platform, &boom_res);
+		manual_start = boom_res.pos;
 	}
 
 	if (iev->btn_down & (1 << BTN_BIT_Y)) {
@@ -312,6 +319,7 @@ static void handle_input_event(struct platform *platform, struct control_event *
 		//platform_boom_lift_controller_set_enabled(platform, false);
 		//platform_boom_extend_controller_set_enabled(platform, false);
 		platform_boom_target_controller_set_enabled(platform, false);
+		platform_boom_trajectory_controller_set_enabled(platform, false);
 		platform_servo_level(platform, false);
 	}
 
@@ -328,8 +336,9 @@ static void handle_input_event(struct platform *platform, struct control_event *
 	*/
 
 	if (iev->btn_down & (1 << BTN_BIT_R1)) {
-		platform_boom_target_controller_set(platform, 50, 80);
-		platform_boom_target_controller_set_enabled(platform, true);
+		struct v2 target = vec2_add(boom_res.pos, (struct v2){50, 0});
+		platform_boom_trajectory_controller_set(platform, boom_res.pos, target);
+		platform_boom_trajectory_controller_set_enabled(platform, true);
 	}
 
 	/*
