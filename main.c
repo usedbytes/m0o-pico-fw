@@ -316,7 +316,7 @@ int main()
 					util_reboot(input->buttons.held & BTN_START);
 				}
 
-				if (current) {
+				if (current && current->handle_input) {
 					current->handle_input(current, platform, input);
 				}
 
