@@ -69,8 +69,8 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 	state.hat.held |= state.hat.pressed;
 	state.hat.held &= ~state.hat.released;
 
-	state.buttons.pressed = hid_state.buttons & ~state.hat.held;
-	state.buttons.released = state.hat.held & ~hid_state.buttons;
+	state.buttons.pressed = hid_state.buttons & ~state.buttons.held;
+	state.buttons.released = state.buttons.held & ~hid_state.buttons;
 	state.buttons.held |= state.buttons.pressed;
 	state.buttons.held &= ~state.buttons.released;
 
