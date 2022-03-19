@@ -544,6 +544,7 @@ static void platform_start_boom_homing(struct platform *platform)
 	}
 
 	int16_t servo_val = get_servo_val(0);
+	ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
 	ioe_set_pwm_duty(&platform->ioe, 1, servo_val);
 
 	platform->boom_extend_state = BOOM_EXTEND_HOME_START;
@@ -788,11 +789,17 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 	                           platform, get_absolute_time() + BOOM_TARGET_CONTROLLER_TICK);
 }
 
+
 static void __platform_boom_trajectory_controller_set(struct platform *platform, struct v2 start, struct v2 target)
 {
 	platform->trajectory.start = start;
 	platform->trajectory.target = target;
 	platform->trajectory.mag = vec2_normalise(vec2_sub(target, start), &platform->trajectory.unit);
+
+	log_printf(&util_logger, "trajectory set. start: %3.2f,%3.2f, target: %3.2f,%3.2f, mag: %3.2f",
+			platform->trajectory.start.x, platform->trajectory.start.y,
+			platform->trajectory.target.x, platform->trajectory.target.y,
+			platform->trajectory.mag);
 }
 
 int platform_boom_trajectory_controller_set(struct platform *platform, struct v2 start, struct v2 target)
@@ -802,6 +809,75 @@ int platform_boom_trajectory_controller_set(struct platform *platform, struct v2
 		.trajectory = {
 			.start = start,
 			.target = target,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void __platform_boom_trajectory_controller_adjust_target(struct platform *platform, struct v2 amount, enum trajectory_adjust relative_to)
+{
+	switch (relative_to) {
+	case TRAJECTORY_ADJUST_RELATIVE_TO_START:
+		__platform_boom_trajectory_controller_set(platform,
+				platform->trajectory.start,
+				vec2_add(platform->trajectory.start, amount));
+		break;
+	case TRAJECTORY_ADJUST_RELATIVE_TO_TARGET:
+		__platform_boom_trajectory_controller_set(platform,
+				platform->trajectory.start,
+				vec2_add(platform->trajectory.target, amount));
+		break;
+	case TRAJECTORY_ADJUST_RELATIVE_TO_CURRENT:
+		if (!platform->boom_trajectory_controller_enabled) {
+			__platform_boom_update_position(platform);
+		}
+		__platform_boom_trajectory_controller_set(platform,
+				platform->trajectory.start,
+				vec2_add(platform->boom_current, amount));
+		break;
+	case TRAJECTORY_ADJUST_SET_ABSOLUTE:
+		__platform_boom_trajectory_controller_set(platform,
+				platform->trajectory.start,
+				amount);
+		break;
+	case TRAJECTORY_ADJUST_SET_BOTH_TO_CURRENT:
+		if (!platform->boom_trajectory_controller_enabled) {
+			__platform_boom_update_position(platform);
+		}
+		__platform_boom_trajectory_controller_set(platform,
+				platform->boom_current,
+				platform->boom_current);
+		break;
+	}
+}
+
+int platform_boom_trajectory_controller_adjust_target(struct platform *platform, struct v2 amount, enum trajectory_adjust relative_to)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_TRAJECTORY_ADJUST,
+		.trajectory_adjust = {
+			.amount = amount,
+			.relative_to = relative_to,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void __platform_boom_set_raw(struct platform *platform, int8_t lift, int8_t extend)
+{
+	boom_lift_set(lift);
+	boom_extend_set(extend);
+}
+
+int platform_boom_set_raw(struct platform *platform, int8_t lift, int8_t extend)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_SET_RAW,
+		.boom_set_raw = {
+			.lift = lift,
+			.extend = extend,
 		},
 	};
 
@@ -915,7 +991,7 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 
 	log_printf(&util_logger, "%d, %d -> %d, %d, took %d us", angle, count,
 			new_angle, new_count, end_time - start_time);
-	log_printf(&util_logger, "Current: %d, %d -> Target: %d, %d", (int)current_pos.x, (int)current_pos.y,
+	log_printf(&util_logger, "Current: %d, %d -> Target: %3.2f,%3.2f", (int)current_pos.x, (int)current_pos.y,
 			platform->trajectory.target.x, platform->trajectory.target.y);
 
 	platform_schedule_function(platform, platform_boom_trajectory_controller_run,
@@ -995,6 +1071,24 @@ int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val)
 static void __platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val)
 {
 	ioe_set_pwm_duty(&platform->ioe, pin, val);
+}
+
+int platform_all_stop(struct platform *platform)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_ALL_STOP,
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void __platform_all_stop(struct platform *platform)
+{
+	__platform_boom_trajectory_controller_set_enabled(platform, false);
+	__platform_boom_target_controller_set_enabled(platform, false);
+	__platform_boom_lift_controller_set_enabled(platform, false);
+	__platform_boom_extend_controller_set_enabled(platform, false);
+	__platform_servo_level_set_enabled(platform, false);
 }
 
 int platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id, float kp, float ki, float kd)
@@ -1087,6 +1181,16 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET_ENABLED:
 				__platform_boom_trajectory_controller_set_enabled(platform, msg.trajectory_enable.enabled);
+				break;
+			case PLATFORM_MESSAGE_ALL_STOP:
+				__platform_all_stop(platform);
+				break;
+			case PLATFORM_MESSAGE_BOOM_TRAJECTORY_ADJUST:
+				__platform_boom_trajectory_controller_adjust_target(platform, msg.trajectory_adjust.amount,
+						msg.trajectory_adjust.relative_to);
+				break;
+			case PLATFORM_MESSAGE_BOOM_SET_RAW:
+				__platform_boom_set_raw(platform, msg.boom_set_raw.lift, msg.boom_set_raw.extend);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

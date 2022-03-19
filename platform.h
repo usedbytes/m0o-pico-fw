@@ -26,6 +26,14 @@ enum pid_controller_id {
 	PID_CONTROLLER_ID_EXTEND = 2,
 };
 
+enum trajectory_adjust {
+	TRAJECTORY_ADJUST_RELATIVE_TO_START   = 1,
+	TRAJECTORY_ADJUST_RELATIVE_TO_TARGET  = 2,
+	TRAJECTORY_ADJUST_RELATIVE_TO_CURRENT = 3,
+	TRAJECTORY_ADJUST_SET_ABSOLUTE        = 4,
+	TRAJECTORY_ADJUST_SET_BOTH_TO_CURRENT = 5,
+};
+
 struct platform_message {
 #define PLATFORM_MESSAGE_RUN               1
 #define PLATFORM_MESSAGE_VELOCITY          2
@@ -42,6 +50,9 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_UPDATE      13
 #define PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET         14
 #define PLATFORM_MESSAGE_BOOM_TRAJECTORY_SET_ENABLED 15
+#define PLATFORM_MESSAGE_ALL_STOP         16
+#define PLATFORM_MESSAGE_BOOM_TRAJECTORY_ADJUST      17
+#define PLATFORM_MESSAGE_BOOM_SET_RAW     18
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -91,6 +102,14 @@ struct platform_message {
 		struct {
 			bool enabled;
 		} trajectory_enable;
+		struct {
+			struct v2 amount;
+			enum trajectory_adjust relative_to;
+		} trajectory_adjust;
+		struct {
+			int8_t lift;
+			int8_t extend;
+		} boom_set_raw;
 	};
 };
 
@@ -194,6 +213,8 @@ int platform_run_function(struct platform *platform, scheduled_func_t func, void
 int platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm);
 int platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled);
 
+int platform_boom_set_raw(struct platform *platform, int8_t lift, int8_t extend);
+
 int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val);
 
 int platform_servo_level(struct platform *platform, bool enabled);
@@ -203,6 +224,9 @@ int platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id
 int platform_boom_update_position(struct platform *platform);
 
 int platform_boom_trajectory_controller_set(struct platform *platform, struct v2 start, struct v2 target);
+int platform_boom_trajectory_controller_adjust_target(struct platform *platform, struct v2 vec, enum trajectory_adjust relative_to);
 int platform_boom_trajectory_controller_set_enabled(struct platform *platform, bool enabled);
+
+int platform_all_stop(struct platform *platform);
 
 #endif /* __PLATFORM_H__ */

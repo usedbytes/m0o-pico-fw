@@ -190,174 +190,48 @@ const uint16_t y_offs = 55;
 const uint16_t middle_apple_y = 180 - y_offs;
 const uint16_t middle_apple_x = 100;
 
-static void handle_input_event(struct platform *platform, struct control_event *cev)
+struct input_state {
+	struct {
+		uint8_t lx;
+		uint8_t ly;
+		uint8_t rx;
+		uint8_t ry;
+	} axes;
+	struct {
+		uint8_t pressed;
+		uint8_t released;
+		uint8_t held;
+	} hat;
+	struct {
+		uint16_t pressed;
+		uint16_t released;
+		uint16_t held;
+	} buttons;
+};
+
+static void handle_input_event(struct platform *platform, struct control_event *cev, struct input_state *state)
 {
-	static uint8_t prev_hat = 0;
-	static uint16_t btn_held = 0;
-	static uint16_t pwm_val = 7000;
-	const uint16_t PWM_STEP = 50;
-
-	static int8_t extend_val;
-	static int8_t lift_val;
-
-	static struct boom_result boom_res;
-
-	static struct v2 manual_start;
-
 	struct input_event *iev = (struct input_event *)&cev->body_pad;
 
 	log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
 			iev->lx, iev->ly, iev->rx, iev->ry, iev->hat, iev->btn_down, iev->btn_up);
 
-	btn_held |= iev->btn_down;
-	btn_held &= ~iev->btn_up;
+	state->axes.lx = iev->lx;
+	state->axes.ly = iev->ly;
+	state->axes.rx = iev->rx;
+	state->axes.ry = iev->ry;
 
-	if (iev->btn_down) {
-		gpio_put(PICO_DEFAULT_LED_PIN, 1);
-	} else {
-		gpio_put(PICO_DEFAULT_LED_PIN, 0);
-	}
+	state->hat.pressed = iev->hat & ~state->hat.held;
+	state->hat.released = state->hat.held & ~iev->hat;
+	state->hat.held |= state->hat.pressed;
+	state->hat.held &= ~state->hat.released;
 
-	if (iev->btn_up & (1 << BTN_BIT_SELECT)) {
-		util_reboot(btn_held & (1 << BTN_BIT_START));
-	}
+	state->buttons.pressed = iev->btn_down;
+	state->buttons.released = iev->btn_up;
+	state->buttons.held |= state->buttons.pressed;
+	state->buttons.held &= ~state->buttons.released;
 
-	/*
-	   int8_t linear = clamp8(-iev->ly);
-	   int8_t rot = clamp8(-iev->rx);
-	   platform_set_velocity(platform, linear, rot);
-	   */
-
-	if ((iev->hat == 0) && (prev_hat != 0)) {
-		extend_val = 0;
-		lift_val = 0;
-		platform_run_function(platform, boom_extend_set_func, &extend_val);
-		platform_run_function(platform, boom_lift_set_func, &lift_val);
-
-		platform_boom_trajectory_controller_set_enabled(platform, false);
-		get_boom_position(platform, &boom_res);
-		manual_start = boom_res.pos;
-	}
-
-	if (btn_held & (1 << BTN_BIT_R1)) {
-		if (iev->hat & HAT_UP && !(prev_hat & HAT_UP)) {
-			pwm_val += PWM_STEP;
-			platform_ioe_set(platform, 1, pwm_val);
-			log_printf(&util_logger, "pwm: %d", pwm_val);
-			platform_run_function(platform, print_degrees_func, NULL);
-		}
-
-		if (iev->hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
-			pwm_val -= PWM_STEP;
-			platform_ioe_set(platform, 1, pwm_val);
-			log_printf(&util_logger, "pwm: %d", pwm_val);
-			platform_run_function(platform, print_degrees_func, NULL);
-		}
-	} else if (btn_held & (1 << BTN_BIT_L1)) {
-		if ((iev->hat & HAT_UP) && !(prev_hat & HAT_UP)) {
-			struct v2 target = vec2_add(manual_start, (struct v2){ 0, 300 });
-			platform_boom_trajectory_controller_set(platform, manual_start, target);
-			platform_boom_trajectory_controller_set_enabled(platform, true);
-		}
-
-		if ((iev->hat & HAT_DOWN) && !(prev_hat & HAT_DOWN)) {
-			struct v2 target = vec2_add(manual_start, (struct v2){ 0, -300 });
-			platform_boom_trajectory_controller_set(platform, manual_start, target);
-			platform_boom_trajectory_controller_set_enabled(platform, true);
-		}
-
-		if ((iev->hat & HAT_RIGHT) && !(prev_hat & HAT_RIGHT)) {
-			struct v2 target = vec2_add(manual_start, (struct v2){ 200, 0 });
-			platform_boom_trajectory_controller_set(platform, manual_start, target);
-			platform_boom_trajectory_controller_set_enabled(platform, true);
-		}
-
-		if ((iev->hat & HAT_LEFT) && !(prev_hat & HAT_LEFT)) {
-			struct v2 target = vec2_add(manual_start, (struct v2){ -200, 0 });
-			platform_boom_trajectory_controller_set(platform, manual_start, target);
-			platform_boom_trajectory_controller_set_enabled(platform, true);
-		}
-	} else {
-		if ((iev->hat & HAT_RIGHT) && !(prev_hat & HAT_RIGHT)) {
-			extend_val = 127;
-			platform_run_function(platform, boom_extend_set_func, &extend_val);
-		}
-
-		if ((iev->hat & HAT_LEFT) && !(prev_hat & HAT_LEFT)) {
-			extend_val = -127;
-			platform_run_function(platform, boom_extend_set_func, &extend_val);
-		}
-
-		if ((iev->hat & HAT_UP) && !(prev_hat & HAT_UP)) {
-			lift_val = 127;
-			platform_run_function(platform, boom_lift_set_func, &lift_val);
-		}
-
-		if ((iev->hat & HAT_DOWN) && !(prev_hat & HAT_DOWN)) {
-			lift_val = -127;
-			platform_run_function(platform, boom_lift_set_func, &lift_val);
-		}
-	}
-
-	if (iev->btn_down & (1 << BTN_BIT_X)) {
-		platform_boom_home(platform);
-	}
-
-	if (iev->btn_down & (1 << BTN_BIT_B)) {
-		get_boom_position(platform, &boom_res);
-		manual_start = boom_res.pos;
-	}
-
-	if (iev->btn_down & (1 << BTN_BIT_Y)) {
-		//platform_boom_lift_controller_set_enabled(platform, true);
-		//platform_boom_extend_controller_set_enabled(platform, true);
-		//platform_boom_target_controller_set_enabled(platform, true);
-		platform_servo_level(platform, true);
-	}
-
-	if (iev->btn_down & (1 << BTN_BIT_A)) {
-		//platform_boom_lift_controller_set_enabled(platform, false);
-		//platform_boom_extend_controller_set_enabled(platform, false);
-		platform_boom_target_controller_set_enabled(platform, false);
-		platform_boom_trajectory_controller_set_enabled(platform, false);
-		platform_servo_level(platform, false);
-	}
-
-	/*
-	if (iev->btn_down & (1 << BTN_BIT_L1)) {
-		platform_boom_lift_controller_set(platform, 40);
-		platform_boom_lift_controller_set_enabled(platform, true);
-	}
-
-	if (iev->btn_down & (1 << BTN_BIT_L2)) {
-		platform_boom_lift_controller_set(platform, 10);
-		platform_boom_lift_controller_set_enabled(platform, true);
-	}
-	*/
-
-	if (iev->btn_down & (1 << BTN_BIT_R1)) {
-		struct v2 target = vec2_add(boom_res.pos, (struct v2){50, 0});
-		platform_boom_trajectory_controller_set(platform, boom_res.pos, target);
-		platform_boom_trajectory_controller_set_enabled(platform, true);
-	}
-
-	/*
-	if (iev->btn_down & (1 << BTN_BIT_L1)) {
-		//platform_boom_lift_controller_set(platform, 0);
-		platform_boom_target_controller_set(platform, middle_apple_x, middle_apple_y);
-		platform_boom_target_controller_set_enabled(platform, true);
-		platform_servo_level(platform, true);
-	}
-	*/
-
-	if (iev->btn_down & (1 << BTN_BIT_L2)) {
-		//platform_boom_extend_controller_set(platform, 60);
-		platform_boom_target_controller_set(platform, 20, middle_apple_y);
-		platform_boom_target_controller_set_enabled(platform, true);
-		platform_servo_level(platform, true);
-	}
-
-	prev_hat = iev->hat;
+	return;
 }
 
 static void handle_pid_event(struct platform *platform, struct control_event *cev)
@@ -368,6 +242,78 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 
 	platform_set_pid_coeffs(platform, ev->id, ev->kp, ev->ki, ev->kd);
 }
+
+#define BTN_TRIANGLE (1 << BTN_BIT_X)
+#define BTN_CIRCLE   (1 << BTN_BIT_A)
+#define BTN_CROSS    (1 << BTN_BIT_B)
+#define BTN_SQUARE   (1 << BTN_BIT_Y)
+
+struct planner_task {
+	void (*handle_input)(struct planner_task *task, struct platform *platform, struct input_state *input);
+};
+
+static void rc_task_handle_input(struct planner_task *task, struct platform *platform, struct input_state *input)
+{
+	if ((input->hat.held == 0) && input->hat.released) {
+		platform_boom_trajectory_controller_set_enabled(platform, false);
+		platform_boom_trajectory_controller_adjust_target(platform,
+				(struct v2){ 0, 0 },
+				TRAJECTORY_ADJUST_SET_BOTH_TO_CURRENT);
+		platform_boom_set_raw(platform, 0, 0);
+	}
+
+	if (input->hat.pressed) {
+		if (input->buttons.held & (1 << BTN_BIT_L1)) {
+			int8_t lift = 0;
+			int8_t extend = 0;
+
+			if (input->hat.pressed & HAT_UP) {
+				lift = 127;
+			}
+			if (input->hat.pressed & HAT_DOWN) {
+				lift = -127;
+			}
+			if (input->hat.pressed & HAT_RIGHT) {
+				extend = 127;
+			}
+			if (input->hat.pressed & HAT_LEFT) {
+				extend = -127;
+			}
+
+			platform_boom_set_raw(platform, lift, extend);
+		} else {
+#define RC_BOOM_MANUAL_MOVE 500
+			struct v2 dp = { 0, 0 };
+			if (input->hat.pressed & HAT_UP) {
+				dp.y += RC_BOOM_MANUAL_MOVE;
+			}
+			if (input->hat.pressed & HAT_DOWN) {
+				dp.y -= RC_BOOM_MANUAL_MOVE;
+			}
+			if (input->hat.pressed & HAT_RIGHT) {
+				dp.x += RC_BOOM_MANUAL_MOVE;
+			}
+			if (input->hat.pressed & HAT_LEFT) {
+				dp.x -= RC_BOOM_MANUAL_MOVE;
+			}
+
+			platform_boom_trajectory_controller_adjust_target(platform, dp, TRAJECTORY_ADJUST_RELATIVE_TO_START);
+			platform_boom_trajectory_controller_set_enabled(platform, true);
+		}
+	}
+
+	if (input->buttons.pressed & BTN_SQUARE) {
+		platform_servo_level(platform, true);
+	}
+
+	if ((input->buttons.pressed & BTN_TRIANGLE) && input->buttons.held & (1 << BTN_BIT_START)) {
+		platform_boom_home(platform);
+	}
+}
+
+struct planner_task rc_task = {
+	.handle_input = rc_task_handle_input,
+};
 
 int main()
 {
@@ -392,6 +338,8 @@ int main()
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
 	struct control_event ev;
+	struct input_state input = { 0 };
+	struct planner_task *current = &rc_task;
 
 	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
 
@@ -402,7 +350,24 @@ int main()
 			case CONTROL_EVENT_TYPE_DUMMY:
 				break;
 			case CONTROL_EVENT_TYPE_INPUT:
-				handle_input_event(platform, &ev);
+				handle_input_event(platform, &ev, &input);
+
+				if (input.buttons.pressed & BTN_CIRCLE) {
+					int ret = platform_all_stop(platform);
+					if (ret) {
+						log_printf(&util_logger, "failed to send all stop!");
+					}
+					current = &rc_task;
+				}
+
+				if (input.buttons.pressed & (1 << BTN_BIT_SELECT)) {
+					util_reboot(input.buttons.held & (1 << BTN_BIT_START));
+				}
+
+				if (current) {
+					current->handle_input(current, platform, &input);
+				}
+
 				break;
 			case CONTROL_EVENT_TYPE_PID:
 				handle_pid_event(platform, &ev);
