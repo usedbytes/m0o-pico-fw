@@ -109,24 +109,16 @@ struct platform_alarm_slot {
 	struct platform_message msg;
 };
 
-enum boom_extend_state {
-	BOOM_EXTEND_HOME_START = 1,
-	BOOM_EXTEND_HOME_EXTENDING,
-	BOOM_EXTEND_HOME_RETRACTING,
-	BOOM_EXTEND_HOME_STOPPED,
-	// Order is important
-	BOOM_EXTEND_HOME_DONE,
-	BOOM_EXTEND_HOME_ERROR,
-};
-
-enum boom_lift_state {
-	BOOM_LIFT_HOME_START = 1,
-	BOOM_LIFT_HOME_RAISING,
-	BOOM_LIFT_HOME_LOWERING,
-	BOOM_LIFT_HOME_STOPPED,
-	// Order is important
-	BOOM_LIFT_HOME_DONE,
-	BOOM_LIFT_HOME_ERROR,
+enum boom_home_state {
+	BOOM_HOME_START = 1,
+	BOOM_HOME_EXTENDING,
+	BOOM_HOME_RETRACTING,
+	BOOM_HOME_RETRACT_STOPPED,
+	BOOM_HOME_RAISING,
+	BOOM_HOME_LOWERING,
+	BOOM_HOME_LOWER_STOPPED,
+	BOOM_HOME_DONE,
+	BOOM_HOME_ERROR = BOOM_HOME_DONE + 1,
 };
 
 struct platform {
@@ -140,6 +132,7 @@ struct platform {
 #define PLATFORM_STATUS_BNO055_OK      (1 << 1)
 #define PLATFORM_STATUS_IOE_PRESENT    (1 << 2)
 #define PLATFORM_STATUS_IOE_OK         (1 << 3)
+#define PLATFORM_STATUS_BOOM_HOMED     (1 << 4)
 	uint32_t status;
 
 	struct i2c_bus i2c_main;
@@ -159,9 +152,7 @@ struct platform {
 #define CONTROLLER_BOOM_FORK_LEVEL (1 << 3)
 	uint32_t controllers_enabled;
 
-	enum boom_extend_state boom_extend_state;
-	enum boom_lift_state boom_lift_state;
-
+	enum boom_home_state boom_home_state;
 	struct fcontroller boom_lift_controller;
 	struct fcontroller boom_extend_pos_controller;
 

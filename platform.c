@@ -194,83 +194,64 @@ static void platform_update_heading(absolute_time_t scheduled, void *data)
 	}
 }
 
-static void platform_boom_extend_home(absolute_time_t scheduled, void *data)
+static void __platform_boom_home_run(absolute_time_t scheduled, void *data)
 {
 	const int8_t home_speed = 90;
 	const uint32_t poll_us = 100000;
+	const uint32_t max_lift = 20;
 	const uint32_t max_extend = 2000;
 	struct platform *platform = data;
+	int ret;
 
-	switch (platform->boom_extend_state) {
-	case BOOM_EXTEND_HOME_START:
+	switch (platform->boom_home_state) {
+	case BOOM_HOME_START:
 		boom_reset_count();
 		boom_extend_set(home_speed);
-		platform->boom_extend_state = BOOM_EXTEND_HOME_EXTENDING;
+		platform->boom_home_state = BOOM_HOME_EXTENDING;
 		break;
-	case BOOM_EXTEND_HOME_EXTENDING:
+	case BOOM_HOME_EXTENDING:
 		if (!boom_extend_at_limit()) {
 			if (boom_extend_set(-home_speed) == 0) {
-				platform->boom_extend_state = BOOM_EXTEND_HOME_RETRACTING;
+				platform->boom_home_state = BOOM_HOME_RETRACTING;
 			}
 		} else if (boom_update_count() >= max_extend) {
 			// Guard for if the switch is broken, so we don't plough
 			// into the far end
 			boom_extend_set(0);
-			platform->boom_extend_state = BOOM_EXTEND_HOME_ERROR;
-			log_printf(&util_logger, "boom homing failed");
+			platform->boom_home_state = BOOM_HOME_ERROR;
+			log_printf(&util_logger, "boom homing failed - extend timeout");
 		}
 		break;
-	case BOOM_EXTEND_HOME_RETRACTING:
+	case BOOM_HOME_RETRACTING:
 		if (boom_extend_at_limit()) {
 			boom_extend_set(0);
-			platform->boom_extend_state = BOOM_EXTEND_HOME_STOPPED;
+			platform->boom_home_state = BOOM_HOME_RETRACT_STOPPED;
 		}
 		break;
-	case BOOM_EXTEND_HOME_STOPPED:
+	case BOOM_HOME_RETRACT_STOPPED:
 		if (boom_extend_set(0) == 0) {
 			boom_reset_count();
-			platform->boom_extend_state = BOOM_EXTEND_HOME_DONE;
+
+			ret = boom_lift_reset_angle();
+			if (ret != 0) {
+				platform->boom_home_state = BOOM_HOME_ERROR;
+				break;
+			}
+
+			boom_lift_set(home_speed);
+			platform->boom_home_state = BOOM_HOME_RAISING;
 		}
 		break;
-	default:
-		break;
-	}
-
-	if (platform->boom_extend_state < BOOM_EXTEND_HOME_DONE) {
-		platform_schedule_function(platform, platform_boom_extend_home, platform, scheduled + poll_us);
-	} else {
-		boom_extend_set(0);
-	}
-}
-
-static void platform_boom_lift_home(absolute_time_t scheduled, void *data)
-{
-	const int8_t home_speed = 90;
-	const uint32_t poll_us = 100000;
-	const uint32_t max_lift = 20;
-	struct platform *platform = data;
-	int ret;
-
-	switch (platform->boom_lift_state) {
-	case BOOM_LIFT_HOME_START:
-		ret = boom_lift_reset_angle();
-		if (ret != 0) {
-			platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
-			break;
-		}
-		boom_lift_set(home_speed);
-		platform->boom_lift_state = BOOM_LIFT_HOME_RAISING;
-		break;
-	case BOOM_LIFT_HOME_RAISING:
+	case BOOM_HOME_RAISING:
 		if (!boom_lift_at_limit()) {
 			if (boom_lift_set(-home_speed) == 0) {
-				platform->boom_lift_state = BOOM_LIFT_HOME_LOWERING;
+				platform->boom_home_state = BOOM_HOME_LOWERING;
 			}
 		} else {
 			int16_t angle = 0;
 			ret = boom_lift_get_angle(&angle);
 			if (ret != 0) {
-				platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
+				platform->boom_home_state = BOOM_HOME_ERROR;
 				break;
 			}
 
@@ -278,30 +259,32 @@ static void platform_boom_lift_home(absolute_time_t scheduled, void *data)
 			// into the far end
 			if (angle >= max_lift) {
 				boom_lift_set(0);
-				platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
-				log_printf(&util_logger, "boom lift homing failed");
+				platform->boom_home_state = BOOM_HOME_ERROR;
+				log_printf(&util_logger, "boom homing failed - raise timeout");
 				break;
 			}
 		}
 		break;
-	case BOOM_LIFT_HOME_LOWERING:
+	case BOOM_HOME_LOWERING:
 		if (boom_lift_at_limit()) {
 			boom_lift_set(0);
 			ret = boom_lift_reset_angle();
 			if (ret != 0) {
-				platform->boom_lift_state = BOOM_EXTEND_HOME_ERROR;
+				platform->boom_home_state = BOOM_HOME_ERROR;
 				break;
 			}
-			platform->boom_lift_state = BOOM_LIFT_HOME_DONE;
+			platform->boom_home_state = BOOM_HOME_DONE;
+			platform->status |= PLATFORM_STATUS_BOOM_HOMED;
 		}
 		break;
 	default:
 		break;
 	}
 
-	if (platform->boom_lift_state < BOOM_LIFT_HOME_DONE) {
-		platform_schedule_function(platform, platform_boom_lift_home, platform, scheduled + poll_us);
+	if (platform->boom_home_state < BOOM_HOME_DONE) {
+		platform_schedule_function(platform, __platform_boom_home_run, platform, scheduled + poll_us);
 	} else {
+		boom_extend_set(0);
 		boom_lift_set(0);
 	}
 }
@@ -402,7 +385,7 @@ static void platform_boom_lift_controller_run(absolute_time_t scheduled, void *d
 static void __platform_boom_lift_controller_set_enabled(struct platform *platform, bool enabled)
 {
 	if (enabled) {
-		if (platform->boom_lift_state != BOOM_LIFT_HOME_DONE) {
+		if (!(platform->status & PLATFORM_STATUS_BOOM_HOMED)) {
 			log_printf(&util_logger, "must home before enabling controller");
 			return;
 		}
@@ -492,7 +475,7 @@ static void platform_boom_extend_controller_run(absolute_time_t scheduled, void 
 static void __platform_boom_extend_controller_set_enabled(struct platform *platform, bool enabled)
 {
 	if (enabled) {
-		if (platform->boom_extend_state != BOOM_EXTEND_HOME_DONE) {
+		if (!(platform->status & PLATFORM_STATUS_BOOM_HOMED)) {
 			log_printf(&util_logger, "must home before enabling controller");
 			return;
 		}
@@ -548,22 +531,24 @@ static void platform_boom_extend_controller_run(absolute_time_t scheduled, void 
 	platform_schedule_function(platform, platform_boom_extend_controller_run, platform, scheduled + BOOM_EXTEND_CONTROLLER_TICK);
 }
 
-static void platform_start_boom_homing(struct platform *platform)
+static void __platform_all_stop(struct platform *platform);
+
+static void __platform_boom_home(struct platform *platform)
 {
-	if (((platform->boom_extend_state > 0) && (platform->boom_extend_state < BOOM_EXTEND_HOME_DONE)) ||
-	    ((platform->boom_lift_state > 0) && (platform->boom_lift_state < BOOM_LIFT_HOME_DONE))) {
+	if ((platform->boom_home_state > 0) && (platform->boom_home_state < BOOM_HOME_DONE)) {
 		log_printf(&util_logger, "homing in progress. can't start");
 		return;
 	}
+
+	__platform_all_stop(platform);
+	platform->status &= ~PLATFORM_STATUS_BOOM_HOMED;
 
 	int16_t servo_val = get_servo_val(0);
 	ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
 	ioe_set_pwm_duty(&platform->ioe, 1, servo_val);
 
-	platform->boom_extend_state = BOOM_EXTEND_HOME_START;
-	platform_schedule_function(platform, platform_boom_extend_home, platform, get_absolute_time());
-	platform->boom_lift_state = BOOM_LIFT_HOME_START;
-	platform_schedule_function(platform, platform_boom_lift_home, platform, get_absolute_time());
+	platform->boom_home_state = BOOM_HOME_START;
+	platform_schedule_function(platform, __platform_boom_home_run, platform, get_absolute_time());
 }
 
 int platform_boom_home(struct platform *platform)
@@ -759,6 +744,11 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 static void __platform_boom_trajectory_controller_set_enabled(struct platform *platform, bool enabled)
 {
 	if (enabled) {
+		if (!(platform->status & PLATFORM_STATUS_BOOM_HOMED)) {
+			log_printf(&util_logger, "must home before enabling controller");
+			return;
+		}
+
 		__platform_boom_extend_controller_set_enabled(platform, true);
 		__platform_boom_lift_controller_set_enabled(platform, true);
 
@@ -892,7 +882,7 @@ static void platform_level_servo_run(absolute_time_t scheduled, void *data)
 static void __platform_servo_level_set_enabled(struct platform *platform, bool enabled)
 {
 	if (enabled) {
-		if (platform->boom_lift_state != BOOM_LIFT_HOME_DONE) {
+		if (!(platform->status & PLATFORM_STATUS_BOOM_HOMED)) {
 			log_printf(&util_logger, "must home before enabling controller");
 			return;
 		}
@@ -1005,7 +995,7 @@ void platform_run(struct platform *platform) {
 				chassis_set(&platform->chassis, msg.velocity.linear, msg.velocity.angular);
 				break;
 			case PLATFORM_MESSAGE_BOOM_HOME:
-				platform_start_boom_homing(platform);
+				__platform_boom_home(platform);
 				break;
 			case PLATFORM_MESSAGE_BOOM_SET:
 				__platform_boom_lift_controller_set(platform, msg.boom_set.angle);
