@@ -282,7 +282,7 @@ void boom_init(struct i2c_bus *i2c)
 	gpio_set_irq_enabled_with_callback(BOOM_EXTEND_LIMIT_PIN, GPIO_IRQ_EDGE_RISE, true, boom_gpio_irq_cb);
 
 	boom.extend.encoder_slice = pwm_gpio_to_slice_num(BOOM_EXTEND_ENC_PIN);
-	init_slice(&boom.extend.motor_slice, pwm_gpio_to_slice_num(BOOM_EXTEND_MOTOR_A_PIN), 20, BOOM_EXTEND_MOTOR_A_PIN);
+	init_slice(&boom.extend.motor_slice, pwm_gpio_to_slice_num(BOOM_EXTEND_MOTOR_A_PIN), 100, BOOM_EXTEND_MOTOR_A_PIN);
 
 	gpio_set_function(BOOM_EXTEND_ENC_PIN, GPIO_FUNC_PWM);
 	pwm_config c = pwm_get_default_config();
@@ -294,5 +294,5 @@ void boom_init(struct i2c_bus *i2c)
 	gpio_set_irq_enabled(BOOM_LIFT_LIMIT_PIN, GPIO_IRQ_EDGE_RISE, true);
 
 	boom.lift.i2c = i2c;
-	init_slice(&boom.lift.motor_slice, pwm_gpio_to_slice_num(BOOM_LIFT_MOTOR_A_PIN), 20, BOOM_LIFT_MOTOR_A_PIN);
+	init_slice(&boom.lift.motor_slice, pwm_gpio_to_slice_num(BOOM_LIFT_MOTOR_A_PIN), 50, BOOM_LIFT_MOTOR_A_PIN);
 }

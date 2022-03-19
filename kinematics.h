@@ -1,20 +1,27 @@
+/**
+ * Copyright (c) 2022 Brian Starkey <stark3y@gmail.com>
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
+#ifndef __KINEMATICS_H__
+#define __KINEMATICS_H__
 
-struct point {
+struct v2 {
 	float x, y;
 };
 
-float point_magnitude(struct point p);
+float vec2_magnitude(struct v2 v);
 
-struct point point_sub(struct point a, struct point b);
+float vec2_normalise(struct v2 v, struct v2 *out);
 
-struct point forward_kinematics(float q1, float q2);
+struct v2 vec2_sub(struct v2 a, struct v2 b);
+
+float vec2_dot(struct v2 a, struct v2 b);
+
+struct v2 forward_kinematics(float q1, float q2);
 
 struct m2 {
 	float a, b, c, d;
-};
-
-struct v2 {
-	float a, b;
 };
 
 struct m2 m2_inverse(struct m2 *m);
@@ -22,3 +29,5 @@ struct m2 m2_inverse(struct m2 *m);
 struct v2 m2_multvect(struct m2 *m, struct v2 *v);
 
 struct m2 get_jacobian(float q1, float q2);
+
+#endif /* __KINEMATICS_H__ */

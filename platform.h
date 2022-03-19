@@ -15,6 +15,7 @@
 #include "controller.h"
 #include "i2c_bus.h"
 #include "ioexpander.h"
+#include "kinematics.h"
 
 #define PLATFORM_ALARM_POOL_SIZE    16
 
@@ -38,6 +39,7 @@ struct platform_message {
 #define PLATFORM_MESSAGE_IOE_SET          10
 #define PLATFORM_MESSAGE_SERVO_LEVEL_SET_ENABLED  11
 #define PLATFORM_MESSAGE_PID_SET          12
+#define PLATFORM_MESSAGE_BOOM_UPDATE      13
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -109,10 +111,6 @@ enum boom_lift_state {
 	BOOM_LIFT_HOME_ERROR,
 };
 
-struct boom_position {
-	int16_t x, y;
-};
-
 struct platform {
 	queue_t queue;
 
@@ -146,10 +144,13 @@ struct platform {
 	struct fcontroller boom_extend_pos_controller;
 	bool boom_extend_controller_enabled;
 
-	struct boom_position boom_pos_target;
+	struct v2 boom_pos_target;
 	bool boom_target_controller_enabled;
 
 	bool servo_level_enabled;
+
+	absolute_time_t boom_timestamp;
+	struct v2 boom_current;
 };
 
 int platform_init(struct platform *platform);
@@ -182,5 +183,7 @@ int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val);
 int platform_servo_level(struct platform *platform, bool enabled);
 
 int platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id, float kp, float ki, float kd);
+
+int platform_boom_update_position(struct platform *platform);
 
 #endif /* __PLATFORM_H__ */

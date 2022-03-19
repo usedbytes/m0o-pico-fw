@@ -21,9 +21,13 @@
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000
 
-#define BOOM_LIFT_CONTROLLER_TICK 5000
+#define BOOM_LIFT_CONTROLLER_TICK 10000
 #define BOOM_EXTEND_CONTROLLER_TICK 5000
 #define BOOM_SERVO_CONTROLLER_TICK 20000
+
+#define BOOM_POS_TARGET_DELTA 2
+#define BOOM_POS_TARGET_MAX_SEGMENT 20
+#define BOOM_TARGET_CONTROLLER_TICK 20000
 
 #define BNO055_ADDR 0x28
 
@@ -84,6 +88,7 @@ static alarm_id_t platform_schedule_message(struct platform *platform, struct pl
 {
 	struct platform_alarm_slot *slot = __find_free_alarm_slot(platform);
 	if (!slot) {
+		log_printf(&util_logger, "No alarm slot!");
 		return -1;
 	}
 
@@ -103,6 +108,7 @@ static alarm_id_t platform_schedule_message(struct platform *platform, struct pl
 
 static int platform_send_message(struct platform *platform, struct platform_message *msg) {
 	if (!queue_try_add(&platform->queue, msg)) {
+		log_printf(&util_logger, "platform message dropped");
 		return -1;
 	}
 
@@ -347,12 +353,12 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	struct fcontroller *c = &platform->boom_lift_controller;
 	c->out_min = -127;
 	c->out_max = 128;
-	fcontroller_set_tunings(c, 0.175 * 3, 0.00, 0.001, BOOM_LIFT_CONTROLLER_TICK);
+	fcontroller_set_tunings(c, 0.9, 0.004, 0, BOOM_LIFT_CONTROLLER_TICK);
 
 	c = &platform->boom_extend_pos_controller;
 	c->out_min = -127;
 	c->out_max = 128;
-	fcontroller_set_tunings(c, 1.2, 0.0001, 0.25, BOOM_EXTEND_CONTROLLER_TICK);
+	fcontroller_set_tunings(c, 0.25, 0.002, 0, BOOM_EXTEND_CONTROLLER_TICK);
 
 	return ret;
 }
@@ -484,7 +490,7 @@ static void __platform_boom_extend_controller_set_enabled(struct platform *platf
 		int16_t current = boom_update_count();
 
 		struct fcontroller *c = &platform->boom_extend_pos_controller;
-		fcontroller_set(c, current);
+		//fcontroller_set(c, current);
 		fcontroller_reinit(c, current, 0);
 
 		platform->boom_extend_controller_enabled = true;
@@ -653,9 +659,52 @@ static int16_t get_servo_val(int16_t angle)
 	return fork_servo_cal[n_servo_cal - 1][1];
 }
 
-#define BOOM_POS_TARGET_DELTA 2
-#define BOOM_POS_TARGET_MAX_SEGMENT 20
-#define BOOM_TARGET_CONTROLLER_TICK 10000
+float clamp_abs(float v, float abs)
+{
+	if (v > abs) {
+		return abs;
+	}
+
+	if (v < -abs) {
+		return -abs;
+	}
+
+	return v;
+}
+
+static void __platform_boom_update_position(struct platform *platform)
+{
+	float radians;
+	float mm;
+
+	int16_t count = boom_update_count();
+	int16_t angle;
+	int ret = boom_lift_get_angle(&angle);
+	if (ret != 0) {
+		log_printf(&util_logger, "failed to get position");
+		return;
+	}
+
+	absolute_time_t now = get_absolute_time();
+
+	mm = boom_extend_count_to_mm(count);
+	radians = boom_lift_angle_to_radians(angle);
+
+	struct v2 p = forward_kinematics(radians, mm);
+
+	platform->boom_timestamp = now;
+	platform->boom_current = p;
+}
+
+int platform_boom_update_position(struct platform *platform)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_BOOM_UPDATE,
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
 static void platform_boom_target_controller_run(absolute_time_t scheduled, void *data)
 {
 	struct platform *platform = data;
@@ -678,33 +727,36 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 
 	// Skip the i2c traffic for timing purposes
 	// At  100kHz it adds 500 us!
-	uint32_t start_time = time_us_32();
+	absolute_time_t now = get_absolute_time();
+	uint32_t start_time = to_us_since_boot(now);
 
 	mm = boom_extend_count_to_mm(count);
 	radians = boom_lift_angle_to_radians(angle);
 
-	struct point p = forward_kinematics(radians, mm);
+	struct v2 p = forward_kinematics(radians, mm);
+	struct v2 dp = vec2_sub(platform->boom_pos_target, p);
 
-	int16_t dx = platform->boom_pos_target.x - p.x;
-	int16_t dy = platform->boom_pos_target.y - p.y;
+	platform->boom_timestamp = now;
+	platform->boom_current = p;
 
-	float distance = sqrt(dx * dx + dy * dy);
+	float distance = vec2_magnitude(dp);
 	if (distance <= BOOM_POS_TARGET_DELTA) {
 		log_printf(&util_logger, "target reached");
 		__platform_boom_target_controller_set_enabled(platform, false);
 		return;
 	}
 
-	struct v2 vec = {
-		.a = dx,
-		.b = dy,
-	};
 	struct m2 j = get_jacobian(radians, mm);
 	struct m2 j_inv = m2_inverse(&j);
-	struct v2 q_dot = m2_multvect(&j_inv, &vec);
+	struct v2 q_dot = m2_multvect(&j_inv, &dp);
 
-	int16_t new_angle = boom_lift_radians_to_angle(radians + (q_dot.a * 0.2));
-	int16_t new_count = boom_extend_mm_to_count(mm + (q_dot.b * 0.2));
+	float rad_step = clamp_abs(q_dot.x, 1.0 * M_PI / 180.0);
+	float mm_step = clamp_abs(q_dot.y, 20);
+
+	log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
+
+	int16_t new_angle = boom_lift_radians_to_angle(radians + rad_step);
+	int16_t new_count = boom_extend_mm_to_count(mm + mm_step);
 
 	uint32_t end_time = time_us_32();
 
@@ -713,7 +765,7 @@ static void platform_boom_target_controller_run(absolute_time_t scheduled, void 
 
 	log_printf(&util_logger, "%d, %d -> %d, %d, took %d us", angle, count,
 			new_angle, new_count, end_time - start_time);
-	log_printf(&util_logger, "%d, %d -> %d, %d", (int)p.x, (int)p.y,
+	log_printf(&util_logger, "Current: %d, %d -> Target: %d, %d", (int)p.x, (int)p.y,
 			platform->boom_pos_target.x, platform->boom_pos_target.y);
 
 	platform_schedule_function(platform, platform_boom_target_controller_run,
@@ -876,6 +928,9 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_PID_SET:
 				__platform_set_pid_coeffs(platform, msg.pid_set.id, msg.pid_set.kp, msg.pid_set.ki, msg.pid_set.kd);
+				break;
+			case PLATFORM_MESSAGE_BOOM_UPDATE:
+				__platform_boom_update_position(platform);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

@@ -14,6 +14,7 @@
 #include "boom.h"
 #include "comm.h"
 #include "input.h"
+#include "kinematics.h"
 #include "log.h"
 #include "platform.h"
 #include "util.h"
@@ -111,6 +112,42 @@ static void get_heading(struct platform *platform, struct heading_result *out)
 	while (!closure.done);
 }
 
+struct boom_result {
+	absolute_time_t timestamp;
+	struct v2 pos;
+};
+
+struct boom_closure {
+	struct platform *platform;
+	struct boom_result *result;
+
+	volatile bool done;
+};
+
+static void __get_boom_cb(absolute_time_t t, void *data)
+{
+	struct boom_closure *closure = (struct boom_closure *)data;
+
+	closure->result->timestamp = closure->platform->boom_timestamp;
+	closure->result->pos = closure->platform->boom_current;
+
+	closure->done = true;
+}
+
+static void get_boom_position(struct platform *platform, struct boom_result *out)
+{
+	struct boom_closure closure = {
+		.platform = platform,
+		.result = out,
+		.done = false,
+	};
+
+	platform_boom_update_position(platform);
+	platform_run_function(platform, __get_boom_cb, &closure);
+
+	while (!closure.done);
+}
+
 static int64_t __timer_dummy_event_cb(alarm_id_t id, void *user_data) {
 	control_event_send_dummy();
 	return 0;
@@ -163,6 +200,8 @@ static void handle_input_event(struct platform *platform, struct control_event *
 	static int8_t extend_val;
 	static int8_t lift_val;
 
+	static struct boom_result boom_res;
+
 	struct input_event *iev = (struct input_event *)&cev->body_pad;
 
 	log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
@@ -208,23 +247,47 @@ static void handle_input_event(struct platform *platform, struct control_event *
 			log_printf(&util_logger, "pwm: %d", pwm_val);
 			platform_run_function(platform, print_degrees_func, NULL);
 		}
+	} else if (btn_held & (1 << BTN_BIT_L1)) {
+		if ((iev->hat & HAT_UP) && !(prev_hat & HAT_UP)) {
+			boom_res.pos.y += 5;
+			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
+			platform_boom_target_controller_set_enabled(platform, true);
+		}
+
+		if ((iev->hat & HAT_DOWN) && !(prev_hat & HAT_DOWN)) {
+			boom_res.pos.y -= 5;
+			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
+			platform_boom_target_controller_set_enabled(platform, true);
+		}
+
+		if ((iev->hat & HAT_RIGHT) && !(prev_hat & HAT_RIGHT)) {
+			boom_res.pos.x += 5;
+			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
+			platform_boom_target_controller_set_enabled(platform, true);
+		}
+
+		if ((iev->hat & HAT_LEFT) && !(prev_hat & HAT_LEFT)) {
+			boom_res.pos.x -= 5;
+			platform_boom_target_controller_set(platform, boom_res.pos.x, boom_res.pos.y);
+			platform_boom_target_controller_set_enabled(platform, true);
+		}
 	} else {
-		if (iev->hat & HAT_RIGHT && !(prev_hat & HAT_RIGHT)) {
+		if ((iev->hat & HAT_RIGHT) && !(prev_hat & HAT_RIGHT)) {
 			extend_val = 127;
 			platform_run_function(platform, boom_extend_set_func, &extend_val);
 		}
 
-		if (iev->hat & HAT_LEFT && !(prev_hat & HAT_LEFT)) {
+		if ((iev->hat & HAT_LEFT) && !(prev_hat & HAT_LEFT)) {
 			extend_val = -127;
 			platform_run_function(platform, boom_extend_set_func, &extend_val);
 		}
 
-		if (iev->hat & HAT_UP && !(prev_hat & HAT_UP)) {
+		if ((iev->hat & HAT_UP) && !(prev_hat & HAT_UP)) {
 			lift_val = 127;
 			platform_run_function(platform, boom_lift_set_func, &lift_val);
 		}
 
-		if (iev->hat & HAT_DOWN && !(prev_hat & HAT_DOWN)) {
+		if ((iev->hat & HAT_DOWN) && !(prev_hat & HAT_DOWN)) {
 			lift_val = -127;
 			platform_run_function(platform, boom_lift_set_func, &lift_val);
 		}
@@ -232,6 +295,10 @@ static void handle_input_event(struct platform *platform, struct control_event *
 
 	if (iev->btn_down & (1 << BTN_BIT_X)) {
 		platform_boom_home(platform);
+	}
+
+	if (iev->btn_down & (1 << BTN_BIT_B)) {
+		get_boom_position(platform, &boom_res);
 	}
 
 	if (iev->btn_down & (1 << BTN_BIT_Y)) {
@@ -249,28 +316,39 @@ static void handle_input_event(struct platform *platform, struct control_event *
 	}
 
 	/*
-	   if (iev->btn_down & (1 << BTN_BIT_R1)) {
-//platform_boom_lift_controller_set(platform, 60);
-platform_boom_target_controller_set(platform, 50, 80);
-platform_boom_target_controller_set_enabled(platform, true);
-}
-*/
+	if (iev->btn_down & (1 << BTN_BIT_L1)) {
+		platform_boom_lift_controller_set(platform, 40);
+		platform_boom_lift_controller_set_enabled(platform, true);
+	}
 
-if (iev->btn_down & (1 << BTN_BIT_L1)) {
-	//platform_boom_lift_controller_set(platform, 0);
-	platform_boom_target_controller_set(platform, middle_apple_x, middle_apple_y);
-	platform_boom_target_controller_set_enabled(platform, true);
-	platform_servo_level(platform, true);
-}
+	if (iev->btn_down & (1 << BTN_BIT_L2)) {
+		platform_boom_lift_controller_set(platform, 10);
+		platform_boom_lift_controller_set_enabled(platform, true);
+	}
+	*/
 
-if (iev->btn_down & (1 << BTN_BIT_L2)) {
-	//platform_boom_extend_controller_set(platform, 60);
-	platform_boom_target_controller_set(platform, 20, middle_apple_y);
-	platform_boom_target_controller_set_enabled(platform, true);
-	platform_servo_level(platform, true);
-}
+	if (iev->btn_down & (1 << BTN_BIT_R1)) {
+		platform_boom_target_controller_set(platform, 50, 80);
+		platform_boom_target_controller_set_enabled(platform, true);
+	}
 
-prev_hat = iev->hat;
+	/*
+	if (iev->btn_down & (1 << BTN_BIT_L1)) {
+		//platform_boom_lift_controller_set(platform, 0);
+		platform_boom_target_controller_set(platform, middle_apple_x, middle_apple_y);
+		platform_boom_target_controller_set_enabled(platform, true);
+		platform_servo_level(platform, true);
+	}
+	*/
+
+	if (iev->btn_down & (1 << BTN_BIT_L2)) {
+		//platform_boom_extend_controller_set(platform, 60);
+		platform_boom_target_controller_set(platform, 20, middle_apple_y);
+		platform_boom_target_controller_set_enabled(platform, true);
+		platform_servo_level(platform, true);
+	}
+
+	prev_hat = iev->hat;
 }
 
 static void handle_pid_event(struct platform *platform, struct control_event *cev)
