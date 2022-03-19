@@ -46,30 +46,35 @@ static uint32_t size_input(uint32_t *args_in, uint32_t *data_len_out, uint32_t *
 
 static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp_args_out, uint8_t *resp_data_out)
 {
-	static uint16_t prev_buttons = 0;
-	struct bt_hid_state state;
+	static struct input_state state = { 0 };
+	struct bt_hid_state hid_state;
 
-	memcpy(&state, data_in, sizeof(state));
+	memcpy(&hid_state, data_in, sizeof(hid_state));
 
 	//log_printf(&util_logger, "L: %2x,%2x R: %2x,%2x, Hat: %1x, Buttons: %04x",
 	//		state.lx, state.ly, state.rx, state.ry, state.hat, state.buttons);
 
-	struct input_event ev = {
-		.btn_down = state.buttons & ~prev_buttons,
-		.btn_up = prev_buttons & ~state.buttons,
-		.lx = state.lx - 128,
-		.ly = state.ly - 128,
-		.rx = state.rx - 128,
-		.ry = state.ry - 128,
-	};
+	state.axes.lx = hid_state.lx - 128;
+	state.axes.ly = hid_state.ly - 128;
+	state.axes.rx = hid_state.rx - 128;
+	state.axes.ry = hid_state.ry - 128;
 
-	prev_buttons = state.buttons;
-
-	if (state.hat <= 7) {
-		ev.hat = hat_pos_to_dirs[state.hat];
+	uint8_t hat = 0;
+	if (hid_state.hat <= 7) {
+		hat = hat_pos_to_dirs[hid_state.hat];
 	}
 
-	control_event_send(CONTROL_EVENT_TYPE_INPUT, &ev, sizeof(ev));
+	state.hat.pressed = hat & ~state.hat.held;
+	state.hat.released = state.hat.held & ~hat;
+	state.hat.held |= state.hat.pressed;
+	state.hat.held &= ~state.hat.released;
+
+	state.buttons.pressed = hid_state.buttons & ~state.hat.held;
+	state.buttons.released = state.hat.held & ~hid_state.buttons;
+	state.buttons.held |= state.buttons.pressed;
+	state.buttons.held &= ~state.buttons.released;
+
+	control_event_send(CONTROL_EVENT_TYPE_INPUT, &state, sizeof(state));
 
 	return COMM_RSP_OK;
 }
@@ -81,3 +86,11 @@ const struct comm_command input_cmd = {
 	.size = &size_input,
 	.handle = &handle_input,
 };
+
+void input_state_print(struct input_state *input)
+{
+	log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: p%01x/h%01x/r%01x, Buttons: p%04x/h%04x/r%04x",
+			input->axes.lx, input->axes.ly, input->axes.rx, input->axes.ry,
+			input->hat.pressed, input->hat.held, input->hat.released,
+			input->buttons.pressed, input->buttons.held, input->buttons.released);
+}

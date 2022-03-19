@@ -190,50 +190,6 @@ const uint16_t y_offs = 55;
 const uint16_t middle_apple_y = 180 - y_offs;
 const uint16_t middle_apple_x = 100;
 
-struct input_state {
-	struct {
-		uint8_t lx;
-		uint8_t ly;
-		uint8_t rx;
-		uint8_t ry;
-	} axes;
-	struct {
-		uint8_t pressed;
-		uint8_t released;
-		uint8_t held;
-	} hat;
-	struct {
-		uint16_t pressed;
-		uint16_t released;
-		uint16_t held;
-	} buttons;
-};
-
-static void handle_input_event(struct platform *platform, struct control_event *cev, struct input_state *state)
-{
-	struct input_event *iev = (struct input_event *)&cev->body_pad;
-
-	log_printf(&util_logger, "L: %d,%d R: %d,%d, Hat: %1x, Buttons: %04x/%04x",
-			iev->lx, iev->ly, iev->rx, iev->ry, iev->hat, iev->btn_down, iev->btn_up);
-
-	state->axes.lx = iev->lx;
-	state->axes.ly = iev->ly;
-	state->axes.rx = iev->rx;
-	state->axes.ry = iev->ry;
-
-	state->hat.pressed = iev->hat & ~state->hat.held;
-	state->hat.released = state->hat.held & ~iev->hat;
-	state->hat.held |= state->hat.pressed;
-	state->hat.held &= ~state->hat.released;
-
-	state->buttons.pressed = iev->btn_down;
-	state->buttons.released = iev->btn_up;
-	state->buttons.held |= state->buttons.pressed;
-	state->buttons.held &= ~state->buttons.released;
-
-	return;
-}
-
 static void handle_pid_event(struct platform *platform, struct control_event *cev)
 {
 	struct pid_coeffs_event *ev = (struct pid_coeffs_event *)&cev->body_pad;
@@ -242,11 +198,6 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 
 	platform_set_pid_coeffs(platform, ev->id, ev->kp, ev->ki, ev->kd);
 }
-
-#define BTN_TRIANGLE (1 << BTN_BIT_X)
-#define BTN_CIRCLE   (1 << BTN_BIT_A)
-#define BTN_CROSS    (1 << BTN_BIT_B)
-#define BTN_SQUARE   (1 << BTN_BIT_Y)
 
 struct planner_task {
 	void (*handle_input)(struct planner_task *task, struct platform *platform, struct input_state *input);
@@ -338,7 +289,7 @@ int main()
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
 
 	struct control_event ev;
-	struct input_state input = { 0 };
+	struct input_state *input;
 	struct planner_task *current = &rc_task;
 
 	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
@@ -350,9 +301,10 @@ int main()
 			case CONTROL_EVENT_TYPE_DUMMY:
 				break;
 			case CONTROL_EVENT_TYPE_INPUT:
-				handle_input_event(platform, &ev, &input);
+				input = (struct input_state *)&ev.body_pad;
+				input_state_print(input);
 
-				if (input.buttons.pressed & BTN_CIRCLE) {
+				if (input->buttons.pressed & BTN_CIRCLE) {
 					int ret = platform_all_stop(platform);
 					if (ret) {
 						log_printf(&util_logger, "failed to send all stop!");
@@ -360,12 +312,12 @@ int main()
 					current = &rc_task;
 				}
 
-				if (input.buttons.pressed & (1 << BTN_BIT_SELECT)) {
-					util_reboot(input.buttons.held & (1 << BTN_BIT_START));
+				if (input->buttons.pressed & BTN_SELECT) {
+					util_reboot(input->buttons.held & BTN_START);
 				}
 
 				if (current) {
-					current->handle_input(current, platform, &input);
+					current->handle_input(current, platform, input);
 				}
 
 				break;
