@@ -45,10 +45,10 @@ extern const struct comm_command input_cmd;
 
 struct input_state {
 	struct {
-		uint8_t lx;
-		uint8_t ly;
-		uint8_t rx;
-		uint8_t ry;
+		int8_t lx;
+		int8_t ly;
+		int8_t rx;
+		int8_t ry;
 	} axes;
 	struct {
 		uint8_t pressed;

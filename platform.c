@@ -810,7 +810,7 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 	// Find out if we already arrived at the target
 	float distance = vec2_magnitude(dp);
 	if (distance <= BOOM_POS_TARGET_DELTA) {
-		log_printf(&util_logger, "trajectory target reached");
+		log_printf(&util_logger, "trajectory: target reached");
 		__platform_boom_trajectory_controller_set_enabled(platform, false);
 		return;
 	}
@@ -838,7 +838,7 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 	float rad_step = q_dot.x;
 	float mm_step = q_dot.y;
 
-	log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
+	//log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
 
 	int16_t new_angle = boom_lift_radians_to_angle(radians + rad_step);
 	int16_t new_count = boom_extend_mm_to_count(mm + mm_step);
@@ -848,10 +848,10 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 	__platform_boom_extend_controller_set(platform, new_count);
 	__platform_boom_lift_controller_set(platform, new_angle);
 
-	log_printf(&util_logger, "%d, %d -> %d, %d, took %d us", angle, count,
-			new_angle, new_count, end_time - start_time);
-	log_printf(&util_logger, "Current: %d, %d -> Target: %3.2f,%3.2f", (int)current_pos.x, (int)current_pos.y,
-			platform->trajectory.target.x, platform->trajectory.target.y);
+	log_printf(&util_logger, "trajectory: %3.2f,%3.2f -> %3.2f,%3.2f (%d us)",
+			current_pos.x, current_pos.y,
+			platform->trajectory.target.x, platform->trajectory.target.y,
+			end_time - start_time);
 
 	platform_schedule_function(platform, platform_boom_trajectory_controller_run,
 	                           platform, get_absolute_time() + BOOM_TRAJECTORY_CONTROLLER_TICK);
