@@ -6,8 +6,9 @@
 
 #include "log.h"
 #include "planner.h"
-#include "platform.h"
 #include "util.h"
+
+#include "platform/platform.h"
 
 enum pick_state {
 	PICK_STATE_IDLE = 0,

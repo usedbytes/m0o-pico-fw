@@ -11,12 +11,14 @@
 #include "pico/float.h"
 #include "pico/sync.h"
 
+#include "log.h"
+#include "util.h"
+
+#include "platform/platform.h"
+
 #include "boom.h"
 #include "controller.h"
 #include "kinematics.h"
-#include "log.h"
-#include "platform.h"
-#include "util.h"
 
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000

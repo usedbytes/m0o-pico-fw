@@ -12,31 +12,34 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 add_executable(rebound
-	bno055.c
-	boom.c
 	camera_task.c
-	chassis.c
 	comm.c
-	controller.c
-	i2c_bus.c
 	input.c
-	kinematics.c
 	log.c
 	main.c
-	platform.c
 	util.c
-	vl53l0x.c
+
+	platform/bno055.c
+	platform/boom.c
+	platform/chassis.c
+	platform/controller.c
+	platform/i2c_bus.c
+	platform/platform.c
+	platform/kinematics.c
+	platform/vl53l0x.c
 
 	plan/apples.c
 )
 
 target_include_directories(rebound PRIVATE
 	${CMAKE_CURRENT_LIST_DIR}
+	${CMAKE_CURRENT_LIST_DIR}/platform
+	${CMAKE_CURRENT_LIST_DIR}/platform/include
 )
 
-add_subdirectory(vl53l0x)
-add_subdirectory(camera)
-add_subdirectory(ioexpander)
+add_subdirectory(platform/vl53l0x)
+add_subdirectory(platform/camera)
+add_subdirectory(platform/ioexpander)
 
 pico_add_extra_outputs(rebound)
 

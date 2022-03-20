@@ -11,14 +11,12 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 
-#include "boom.h"
 #include "comm.h"
 #include "input.h"
-#include "kinematics.h"
 #include "log.h"
 #include "plan/planner.h"
 #include "plan/apples.h"
-#include "platform.h"
+#include "platform/platform.h"
 #include "util.h"
 
 #define CONTROL_QUEUE_LENGTH 32

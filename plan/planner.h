@@ -7,7 +7,7 @@
 #define __PLANNER_H__
 
 #include "input.h"
-#include "platform.h"
+#include "platform/platform.h"
 
 struct planner_task {
 	void (*on_start)(const struct planner_task *task);
