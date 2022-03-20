@@ -51,6 +51,7 @@ struct platform_message {
 #define PLATFORM_MESSAGE_ALL_STOP         16
 #define PLATFORM_MESSAGE_BOOM_TRAJECTORY_ADJUST      17
 #define PLATFORM_MESSAGE_BOOM_SET_RAW     18
+#define PLATFORM_MESSAGE_STATUS_REQUEST   19
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -101,6 +102,9 @@ struct platform_message {
 			int8_t lift;
 			int8_t extend;
 		} boom_set_raw;
+		struct {
+			struct platform_status_report *dst;
+		} status_request;
 	};
 };
 
@@ -128,11 +132,12 @@ struct platform {
 	critical_section_t slot_lock;
 	struct platform_alarm_slot slots[PLATFORM_ALARM_POOL_SIZE];
 
-#define PLATFORM_STATUS_BNO055_PRESENT (1 << 0)
-#define PLATFORM_STATUS_BNO055_OK      (1 << 1)
-#define PLATFORM_STATUS_IOE_PRESENT    (1 << 2)
-#define PLATFORM_STATUS_IOE_OK         (1 << 3)
-#define PLATFORM_STATUS_BOOM_HOMED     (1 << 4)
+#define PLATFORM_STATUS_BNO055_PRESENT      (1 << 0)
+#define PLATFORM_STATUS_BNO055_OK           (1 << 1)
+#define PLATFORM_STATUS_IOE_PRESENT         (1 << 2)
+#define PLATFORM_STATUS_IOE_OK              (1 << 3)
+#define PLATFORM_STATUS_BOOM_HOMED          (1 << 4)
+#define PLATFORM_STATUS_BOOM_TARGET_REACHED (1 << 5)
 	uint32_t status;
 
 	struct i2c_bus i2c_main;
@@ -201,5 +206,16 @@ int platform_boom_trajectory_controller_adjust_target(struct platform *platform,
 int platform_boom_trajectory_controller_set_enabled(struct platform *platform, bool enabled);
 
 int platform_all_stop(struct platform *platform);
+
+struct platform_status_report {
+	absolute_time_t timestamp;
+	uint32_t status;
+	int16_t heading;
+	struct v2 boom_pos;
+
+	volatile bool complete;
+};
+
+int platform_get_status(struct platform *platform, struct platform_status_report *dst);
 
 #endif /* __PLATFORM_H__ */

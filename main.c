@@ -168,6 +168,7 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 
 struct planner_task {
 	void (*handle_input)(struct planner_task *task, struct platform *platform, struct input_state *input);
+	void (*tick)(struct planner_task *task, struct platform *platform, struct platform_status_report *status);
 };
 
 static void rc_task_handle_input(struct planner_task *task, struct platform *platform, struct input_state *input)
@@ -229,8 +230,18 @@ static void rc_task_handle_input(struct planner_task *task, struct platform *pla
 	}
 }
 
+void rc_task_tick(struct planner_task *task, struct platform *platform, struct platform_status_report *status)
+{
+#if 0
+	log_printf(&util_logger, "Status: %x, heading: %3.2f, boom: %3.2f,%3.2f",
+			status->status, status->heading / 16.0,
+			status->boom_pos.x, status->boom_pos.y);
+#endif
+}
+
 struct planner_task rc_task = {
 	.handle_input = rc_task_handle_input,
+	.tick = rc_task_tick,
 };
 
 int main()
@@ -259,11 +270,28 @@ int main()
 	struct input_state *input;
 	struct planner_task *current = &rc_task;
 
-	add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
+	const uint32_t update_us = 20000;
+	absolute_time_t now = get_absolute_time();
+	absolute_time_t next_time = delayed_by_us(now, update_us);
+	bool run_tick = false;
+	struct platform_status_report status_report = { 0 };
+
+	add_alarm_at(next_time, __timer_dummy_event_cb, NULL, false);
 
 	while (1) {
 		control_event_get_blocking(&ev);
+
+		// Jump in and request a platform update if it's time to
+		now = get_absolute_time();
+		if (to_us_since_boot(now) >= to_us_since_boot(next_time)) {
+			next_time = delayed_by_us(next_time, update_us);
+			platform_get_status(platform, &status_report);
+			run_tick = true;
+		}
+
+		// Then handle the incoming events
 		do {
+
 			switch (ev.type) {
 			case CONTROL_EVENT_TYPE_DUMMY:
 				break;
@@ -294,13 +322,16 @@ int main()
 			}
 		} while (control_event_try_get(&ev));
 
-		/*
-		struct heading_result heading;
-		get_heading(platform, &heading);
-		log_printf(&util_logger, "heading @%"PRIu64": %3.2f", heading.timestamp, heading.heading / 16.0);
-		*/
-		//log_printf(&util_logger, "count: %d", boom_update_count());
+		if (run_tick) {
+			// Wait for any pending platform update
+			while (!status_report.complete);
 
-		add_alarm_in_us(100000, __timer_dummy_event_cb, NULL, false);
+			if (current && current->tick) {
+				current->tick(current, platform, &status_report);
+			}
+
+			run_tick = false;
+			add_alarm_at(next_time, __timer_dummy_event_cb, NULL, false);
+		}
 	}
 }

@@ -650,6 +650,7 @@ static void __platform_boom_trajectory_controller_set(struct platform *platform,
 	platform->trajectory.start = start;
 	platform->trajectory.target = target;
 	platform->trajectory.mag = vec2_normalise(vec2_sub(target, start), &platform->trajectory.unit);
+	platform->status &= ~PLATFORM_STATUS_BOOM_TARGET_REACHED;
 
 	log_printf(&util_logger, "trajectory set. start: %3.2f,%3.2f, target: %3.2f,%3.2f, mag: %3.2f",
 			platform->trajectory.start.x, platform->trajectory.start.y,
@@ -811,6 +812,7 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 	float distance = vec2_magnitude(dp);
 	if (distance <= BOOM_POS_TARGET_DELTA) {
 		log_printf(&util_logger, "trajectory: target reached");
+		platform->status |= PLATFORM_STATUS_BOOM_TARGET_REACHED;
 		__platform_boom_trajectory_controller_set_enabled(platform, false);
 		return;
 	}
@@ -976,6 +978,36 @@ static void __platform_set_pid_coeffs(struct platform *platform, enum pid_contro
 	}
 }
 
+static void __platform_get_status(struct platform *platform, struct platform_status_report *dst)
+{
+	dst->timestamp = get_absolute_time();
+
+	int ret = bno055_get_heading(&platform->bno055, &dst->heading);
+	if (ret) {
+		platform->status &= ~(PLATFORM_STATUS_BNO055_OK);
+		log_printf(&util_logger, "platform_update_heading failed: %d", ret);
+	}
+
+	__platform_boom_update_position(platform);
+	dst->boom_pos = platform->boom_current;
+	dst->status = platform->status;
+
+	dst->complete = true;
+}
+
+int platform_get_status(struct platform *platform, struct platform_status_report *dst)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_STATUS_REQUEST,
+		.status_request = {
+			.dst = dst,
+		},
+	};
+	dst->complete = false;
+
+	return platform_send_message(platform, &msg);
+}
+
 void platform_run(struct platform *platform) {
 	// Kick off heading updates
 	if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
@@ -1036,6 +1068,9 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_BOOM_SET_RAW:
 				__platform_boom_set_raw(platform, msg.boom_set_raw.lift, msg.boom_set_raw.extend);
+				break;
+			case PLATFORM_MESSAGE_STATUS_REQUEST:
+				__platform_get_status(platform, msg.status_request.dst);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));
