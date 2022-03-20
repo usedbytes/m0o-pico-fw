@@ -16,6 +16,8 @@
 #include "input.h"
 #include "kinematics.h"
 #include "log.h"
+#include "plan/planner.h"
+#include "plan/apples.h"
 #include "platform.h"
 #include "util.h"
 
@@ -166,12 +168,7 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 	platform_set_pid_coeffs(platform, ev->id, ev->kp, ev->ki, ev->kd);
 }
 
-struct planner_task {
-	void (*handle_input)(struct planner_task *task, struct platform *platform, struct input_state *input);
-	void (*tick)(struct planner_task *task, struct platform *platform, struct platform_status_report *status);
-};
-
-static void rc_task_handle_input(struct planner_task *task, struct platform *platform, struct input_state *input)
+static void rc_task_handle_input(const struct planner_task *task, struct platform *platform, struct input_state *input)
 {
 	if ((input->hat.held == 0) && input->hat.released) {
 		platform_boom_trajectory_controller_set_enabled(platform, false);
@@ -230,7 +227,7 @@ static void rc_task_handle_input(struct planner_task *task, struct platform *pla
 	}
 }
 
-void rc_task_tick(struct planner_task *task, struct platform *platform, struct platform_status_report *status)
+void rc_task_tick(const struct planner_task *task, struct platform *platform, struct platform_status_report *status)
 {
 #if 0
 	log_printf(&util_logger, "Status: %x, heading: %3.2f, boom: %3.2f,%3.2f",
@@ -268,7 +265,9 @@ int main()
 
 	struct control_event ev;
 	struct input_state *input;
-	struct planner_task *current = &rc_task;
+	const struct planner_task *current = &rc_task;
+
+	const struct planner_task *apples_task = apples_get_task();
 
 	const uint32_t update_us = 20000;
 	absolute_time_t now = get_absolute_time();
@@ -315,6 +314,13 @@ int main()
 					current->handle_input(current, platform, input);
 				}
 
+				if (input->buttons.released & BTN_HEART) {
+					current = apples_task;
+					if (current && current->on_start) {
+						current->on_start(current);
+					}
+				}
+
 				break;
 			case CONTROL_EVENT_TYPE_PID:
 				handle_pid_event(platform, &ev);
@@ -331,7 +337,7 @@ int main()
 			}
 
 			run_tick = false;
-			add_alarm_at(next_time, __timer_dummy_event_cb, NULL, false);
+			add_alarm_at(next_time, __timer_dummy_event_cb, NULL, true);
 		}
 	}
 }

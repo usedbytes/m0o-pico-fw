@@ -681,7 +681,7 @@ static void __platform_boom_trajectory_controller_adjust_target(struct platform 
 		break;
 	case TRAJECTORY_ADJUST_RELATIVE_TO_TARGET:
 		__platform_boom_trajectory_controller_set(platform,
-				platform->trajectory.start,
+				platform->trajectory.target,
 				vec2_add(platform->trajectory.target, amount));
 		break;
 	case TRAJECTORY_ADJUST_RELATIVE_TO_CURRENT:
@@ -689,7 +689,7 @@ static void __platform_boom_trajectory_controller_adjust_target(struct platform 
 			__platform_boom_update_position(platform);
 		}
 		__platform_boom_trajectory_controller_set(platform,
-				platform->trajectory.start,
+				platform->boom_current,
 				vec2_add(platform->boom_current, amount));
 		break;
 	case TRAJECTORY_ADJUST_SET_ABSOLUTE:

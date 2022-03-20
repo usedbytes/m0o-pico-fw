@@ -26,6 +26,12 @@ add_executable(rebound
 	platform.c
 	util.c
 	vl53l0x.c
+
+	plan/apples.c
+)
+
+target_include_directories(rebound PRIVATE
+	${CMAKE_CURRENT_LIST_DIR}
 )
 
 add_subdirectory(vl53l0x)
