@@ -189,9 +189,6 @@ int platform_boom_extend_controller_set_enabled(struct platform *platform, bool 
 alarm_id_t platform_schedule_function(struct platform *platform, scheduled_func_t func, void *data, absolute_time_t at);
 int platform_run_function(struct platform *platform, scheduled_func_t func, void *data);
 
-int platform_boom_target_controller_set(struct platform *platform, int16_t x_mm, int16_t y_mm);
-int platform_boom_target_controller_set_enabled(struct platform *platform, bool enabled);
-
 int platform_boom_set_raw(struct platform *platform, int8_t lift, int8_t extend);
 
 int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val);
