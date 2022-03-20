@@ -6,6 +6,8 @@
 #ifndef __INPUT_H__
 #define __INPUT_H__
 
+#include <stdint.h>
+
 #define HAT_UP    (1 << 0)
 #define HAT_RIGHT (1 << 1)
 #define HAT_DOWN  (1 << 2)
@@ -39,6 +41,7 @@
 #define BTN_START    (1 << BTN_BIT_START)
 #define BTN_SELECT   (1 << BTN_BIT_SELECT)
 #define BTN_HEART    (1 << BTN_BIT_HEART)
+// Note! Star doesn't work for some reason!
 #define BTN_STAR     (1 << BTN_BIT_STAR)
 
 extern const struct comm_command input_cmd;

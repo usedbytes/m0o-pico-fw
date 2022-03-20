@@ -8,6 +8,7 @@
 
 #include <stdint.h>
 
+#include "pico/sync.h"
 #include "pico/util/queue.h"
 
 #include "bno055.h"
