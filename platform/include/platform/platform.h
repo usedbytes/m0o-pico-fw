@@ -216,4 +216,6 @@ struct platform_status_report {
 
 int platform_get_status(struct platform *platform, struct platform_status_report *dst);
 
+int platform_servo_set(struct platform *platform, int channel, uint16_t value);
+
 #endif /* __PLATFORM_H__ */

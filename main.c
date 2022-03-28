@@ -153,9 +153,9 @@ static int64_t __timer_dummy_event_cb(alarm_id_t id, void *user_data) {
 	return 0;
 }
 
-const uint16_t y_offs = 55;
-const uint16_t middle_apple_y = 180 - y_offs;
-const uint16_t middle_apple_x = 100;
+//const uint16_t y_offs = 55;
+//const uint16_t middle_apple_y = 180 - y_offs;
+//const uint16_t middle_apple_x = 100;
 
 static void handle_pid_event(struct platform *platform, struct control_event *cev)
 {
@@ -168,6 +168,7 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 
 static void rc_task_handle_input(const struct planner_task *task, struct platform *platform, struct input_state *input)
 {
+	static uint16_t flap_servo = 5000;
 	if ((input->hat.held == 0) && input->hat.released) {
 		platform_boom_trajectory_controller_set_enabled(platform, false);
 		platform_boom_trajectory_controller_adjust_target(platform,
@@ -195,6 +196,18 @@ static void rc_task_handle_input(const struct planner_task *task, struct platfor
 			}
 
 			platform_boom_set_raw(platform, lift, extend);
+		} else if (input->buttons.held & (1 << BTN_BIT_R1)) {
+#define SERVO_STEP 50
+#define GRAIN_FLAP_OPEN   4850
+#define GRAIN_FLAP_CLOSED 2800
+			if (input->hat.pressed & HAT_LEFT) {
+				flap_servo = GRAIN_FLAP_CLOSED;
+			}
+			if (input->hat.pressed & HAT_RIGHT) {
+				flap_servo = GRAIN_FLAP_OPEN;
+			}
+			log_printf(&util_logger, "flap servo: %d", flap_servo);
+			platform_ioe_set(platform, 2, flap_servo);
 		} else {
 #define RC_BOOM_MANUAL_MOVE 500
 			struct v2 dp = { 0, 0 };

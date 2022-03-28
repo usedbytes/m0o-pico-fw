@@ -49,6 +49,9 @@
 #define I2C_AUX_PIN_SDA   2
 #define I2C_AUX_PIN_SCL   3
 
+#define GRAIN_FLAP_OPEN   4850
+#define GRAIN_FLAP_CLOSED 2800
+
 static inline bool __controllers_are_enabled(struct platform *platform, uint32_t controller_mask)
 {
 	return (platform->controllers_enabled & controller_mask) == controller_mask;
@@ -339,6 +342,7 @@ int platform_init(struct platform *platform /*, platform_config*/)
 		ret = ioe_set_pwm_period(&platform->ioe, 60000);
 		ret |= ioe_set_pwm_divider(&platform->ioe, IOE_PWM_DIVIDER_8);
 		ret |= ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
+		ret |= ioe_set_pin_mode(&platform->ioe, 2, IOE_PIN_MODE_PWM);
 		if (ret) {
 			platform->status &= ~PLATFORM_STATUS_IOE_OK;
 		}
