@@ -14,7 +14,8 @@ struct platform_vl53l0x;
 
 struct platform_vl53l0x *platform_vl53l0x_init(struct platform *platform, struct i2c_bus *bus);
 
-void __platform_vl53l0x_set_enabled(struct platform_vl53l0x *sens, bool enabled);
+void __platform_vl53l0x_set_continuous(struct platform_vl53l0x *sens, bool enabled);
+void __platform_vl53l0x_trigger_single(struct platform_vl53l0x *sens);
 
 void platform_vl53l0x_get_status(struct platform_vl53l0x *sens, absolute_time_t *ts, uint16_t *range_mm, uint8_t *range_status);
 

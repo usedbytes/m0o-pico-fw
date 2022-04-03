@@ -55,7 +55,7 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_SET_RAW     18
 #define PLATFORM_MESSAGE_STATUS_REQUEST   19
 #define PLATFORM_MESSAGE_CAMERA_CAPTURE   20
-#define PLATFORM_MESSAGE_FRONT_LASER_SET_ENABLED     21
+#define PLATFORM_MESSAGE_LASER_TRIGGER    21
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -117,6 +117,11 @@ struct platform_message {
 			camera_frame_cb cb;
 			void *cb_data;
 		} camera_capture;
+		struct {
+			int channel;
+			bool enabled;
+			bool continuous;
+		} laser_trigger;
 	};
 };
 
@@ -246,6 +251,7 @@ int platform_servo_set(struct platform *platform, int channel, uint16_t value);
 
 int platform_camera_capture(struct platform *platform, struct camera_buffer *into, camera_frame_cb cb, void *cb_data);
 
-int platform_vl53l0x_enable(struct platform *platform, int chan, bool enable);
+int platform_vl53l0x_trigger_single(struct platform *platform, int chan);
+int platform_vl53l0x_set_continuous(struct platform *platform, int chan, bool enable);
 
 #endif /* __PLATFORM_H__ */

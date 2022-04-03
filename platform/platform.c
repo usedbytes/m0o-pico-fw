@@ -1054,16 +1054,45 @@ void __platform_camera_capture(struct platform *platform, struct camera_buffer *
 	platform_camera_do_capture(platform->camera, into, cb, cb_data);
 }
 
-int platform_vl53l0x_enable(struct platform *platform, int chan, bool enable)
+static void __platform_laser_trigger(struct platform *platform, int chan, bool enabled, bool continuous)
 {
 	if (chan != 0) {
-		return -1;
+		return;
 	}
 
+	if (!platform->front_laser) {
+		return;
+	}
+
+	if (continuous) {
+		__platform_vl53l0x_set_continuous(platform->front_laser, enabled);
+	} else {
+		__platform_vl53l0x_trigger_single(platform->front_laser);
+	}
+}
+
+int platform_vl53l0x_trigger_single(struct platform *platform, int chan)
+{
 	struct platform_message msg = {
-		.type = PLATFORM_MESSAGE_FRONT_LASER_SET_ENABLED,
-		.set_enabled = {
+		.type = PLATFORM_MESSAGE_LASER_TRIGGER,
+		.laser_trigger = {
+			.channel = chan,
+			.enabled = true,
+			.continuous = false,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+int platform_vl53l0x_set_continuous(struct platform *platform, int chan, bool enable)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_LASER_TRIGGER,
+		.laser_trigger = {
+			.channel = chan,
 			.enabled = enable,
+			.continuous = true,
 		},
 	};
 
@@ -1139,8 +1168,8 @@ void platform_run(struct platform *platform) {
 			case PLATFORM_MESSAGE_CAMERA_CAPTURE:
 				__platform_camera_capture(platform, msg.camera_capture.into, msg.camera_capture.cb, msg.camera_capture.cb_data);
 				break;
-			case PLATFORM_MESSAGE_FRONT_LASER_SET_ENABLED:
-				__platform_vl53l0x_set_enabled(platform->front_laser, msg.set_enabled.enabled);
+			case PLATFORM_MESSAGE_LASER_TRIGGER:
+				__platform_laser_trigger(platform, msg.laser_trigger.channel, msg.laser_trigger.enabled, msg.laser_trigger.continuous);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

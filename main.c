@@ -232,6 +232,10 @@ static void rc_task_handle_input(const struct planner_task *task, struct platfor
 		}
 	}
 
+	if (input->buttons.pressed & BTN_R2) {
+		platform_vl53l0x_trigger_single(platform, 0);
+	}
+
 	if (input->buttons.pressed & BTN_SQUARE) {
 		platform_servo_level(platform, true);
 	}
@@ -293,7 +297,7 @@ int main()
 
 	add_alarm_at(next_time, __timer_dummy_event_cb, NULL, false);
 
-	//platform_vl53l0x_enable(platform, 0, true);
+	absolute_time_t last_range = nil_time;
 
 	while (1) {
 		control_event_get_blocking(&ev);
@@ -355,10 +359,13 @@ int main()
 			// Wait for any pending platform update
 			while (!status_report.complete);
 
-			log_printf(&util_logger, "Range: %"PRIu64" (%d) %d mm",
-					to_us_since_boot(status_report.front_laser.timestamp),
-					status_report.front_laser.range_status,
-					status_report.front_laser.range_mm);
+			if (status_report.front_laser.timestamp != last_range) {
+				log_printf(&util_logger, "Range: %"PRIu64" (%d) %d mm",
+						to_us_since_boot(status_report.front_laser.timestamp),
+						status_report.front_laser.range_status,
+						status_report.front_laser.range_mm);
+				last_range = status_report.front_laser.timestamp;
+			}
 
 			if (current && current->tick) {
 				current->tick(current, platform, &status_report);

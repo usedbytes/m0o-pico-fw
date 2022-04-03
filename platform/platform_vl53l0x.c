@@ -15,9 +15,10 @@
 enum vl53l0x_state {
 	LASER_ERROR = -1,
 	LASER_STOPPED = 0,
-	LASER_STARTING,
-	LASER_PENDING,
-	LASER_STOPPING,
+	LASER_SINGLE_START,
+	LASER_SINGLE_PENDING,
+	LASER_CONTINUOUS_START,
+	LASER_CONTINUOUS_PENDING,
 };
 
 struct platform_vl53l0x {
@@ -76,61 +77,80 @@ static void platform_vl53l0x_run(absolute_time_t scheduled, void *data)
 	int ret;
 	VL53L0X_RangingMeasurementData_t meas;
 
+	bool trigger = false;
+	bool pending = false;
+	enum vl53l0x_state next_state = sens->state;
+
 	switch (sens->state) {
 	case LASER_STOPPED:
 	case LASER_ERROR:
 		return;
-	case LASER_PENDING:
+	case LASER_SINGLE_START:
+		trigger = true;
+		next_state = LASER_SINGLE_PENDING;
+		break;
+	case LASER_CONTINUOUS_START:
+		trigger = true;
+		next_state = LASER_CONTINUOUS_PENDING;
+		break;
+	case LASER_SINGLE_PENDING:
+		pending = true;
+		// next_state depends on whether the current reading is finished.
+		break;
+	case LASER_CONTINUOUS_PENDING:
+		pending = true;
+		// trigger depends on whether the current reading is finished.
+		// next_state = current state.
+		break;
+	}
+
+	if (pending) {
 		ret = vl53l0x_check_measurement_ready(&sens->dev);
 		if (ret < 0) {
 			sens->range_status = 0xff;
 			sens->state = LASER_ERROR;
 			return;
-		} else if (ret != 1) {
-			//log_printf(&util_logger, "vl53l0x pending");
-			// Still pending
-			break;
+		} else if (ret == 1) {
+			ret = vl53l0x_get_measurement(&sens->dev, &meas);
+			if (ret < 0) {
+				sens->range_status = 0xff;
+				sens->state = LASER_ERROR;
+				return;
+			}
+
+			sens->timestamp = scheduled;
+			sens->range_mm = meas.RangeMilliMeter;
+			sens->range_status = meas.RangeStatus;
+
+			if (sens->state == LASER_SINGLE_PENDING) {
+				next_state = LASER_STOPPED;
+			}
+
+			if (next_state != LASER_STOPPED) {
+				trigger = true;
+			}
 		}
+	}
 
-		//log_printf(&util_logger, "vl53l0x done");
-		// Otherwise, reading is ready, grab it and schedule a new one
-		ret = vl53l0x_get_measurement(&sens->dev, &meas);
-		if (ret < 0) {
-			sens->range_status = 0xff;
-			sens->state = LASER_ERROR;
-			return;
-		}
-
-		sens->timestamp = scheduled;
-		sens->range_mm = meas.RangeMilliMeter;
-		sens->range_status = meas.RangeStatus;
-
-		/* Fallthrough */
-	case LASER_STARTING:
-		//log_printf(&util_logger, "vl53l0x starting");
+	if (trigger) {
 		ret = vl53l0x_start_measurement(&sens->dev);
 		if (ret < 0) {
 			sens->range_status = 0xff;
 			sens->state = LASER_ERROR;
 			return;
 		}
-
-		sens->state = LASER_PENDING;
-		break;
-	case LASER_STOPPING:
-		sens->state = LASER_STOPPED;
-		break;
 	}
 
-	if (sens->state == LASER_PENDING) {
+	sens->state = next_state;
+
+	if (sens->state > LASER_STOPPED) {
 		platform_schedule_function(sens->platform, platform_vl53l0x_run,
 					   sens, get_absolute_time() + poll_time_us);
 	}
 }
 
-void __platform_vl53l0x_set_enabled(struct platform_vl53l0x *sens, bool enabled)
+void __platform_vl53l0x_set_continuous(struct platform_vl53l0x *sens, bool enabled)
 {
-	//log_printf(&util_logger, "vl53l0x_set_enabled: %p %d", sens, enabled);
 	if (!sens) {
 		return;
 	}
@@ -141,13 +161,24 @@ void __platform_vl53l0x_set_enabled(struct platform_vl53l0x *sens, bool enabled)
 			return;
 		}
 
-		sens->state = LASER_STARTING;
-		//log_printf(&util_logger, "vl53l0x_set_enabled: %p %d", sens, enabled);
+		sens->state = LASER_CONTINUOUS_START;
 		platform_schedule_function(sens->platform, platform_vl53l0x_run, sens, get_absolute_time());
 	} else {
-		sens->state = LASER_STOPPING;
-		log_printf(&util_logger, "front laser disabled");
+		sens->state = LASER_STOPPED;
+	}
+}
+
+void __platform_vl53l0x_trigger_single(struct platform_vl53l0x *sens)
+{
+	if (!sens) {
+		return;
 	}
 
-	//log_printf(&util_logger, "<<< vl53l0x_set_enabled");
+	if (sens->state > LASER_STOPPED) {
+		log_printf(&util_logger, "vl53l0x: already running");
+		return;
+	}
+
+	sens->state = LASER_SINGLE_START;
+	platform_schedule_function(sens->platform, platform_vl53l0x_run, sens, get_absolute_time());
 }
