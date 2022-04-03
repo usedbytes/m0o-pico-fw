@@ -55,6 +55,7 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_SET_RAW     18
 #define PLATFORM_MESSAGE_STATUS_REQUEST   19
 #define PLATFORM_MESSAGE_CAMERA_CAPTURE   20
+#define PLATFORM_MESSAGE_FRONT_LASER_SET_ENABLED     21
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -63,6 +64,9 @@ struct platform_message {
 			scheduled_func_t func;
 			void *arg;
 		} run;
+		struct {
+			bool enabled;
+		} set_enabled;
 		struct {
 			int8_t linear;
 			int8_t angular;
@@ -148,6 +152,8 @@ struct platform {
 #define PLATFORM_STATUS_BOOM_TARGET_REACHED (1 << 5)
 #define PLATFORM_STATUS_CAMERA_PRESENT      (1 << 6)
 #define PLATFORM_STATUS_CAMERA_OK           (1 << 7)
+#define PLATFORM_STATUS_FRONT_LASER_PRESENT (1 << 8)
+#define PLATFORM_STATUS_FRONT_LASER_OK      (1 << 9)
 	uint32_t status;
 
 	struct i2c_bus i2c_main;
@@ -165,6 +171,7 @@ struct platform {
 #define CONTROLLER_BOOM_EXTEND     (1 << 1)
 #define CONTROLLER_BOOM_TRAJECTORY (1 << 2)
 #define CONTROLLER_BOOM_FORK_LEVEL (1 << 3)
+#define CONTROLLER_FRONT_LASER     (1 << 4)
 	uint32_t controllers_enabled;
 
 	enum boom_home_state boom_home_state;
@@ -182,6 +189,8 @@ struct platform {
 	} trajectory;
 
 	struct platform_camera *camera;
+
+	struct platform_vl53l0x *front_laser;
 };
 
 int platform_init(struct platform *platform);
@@ -222,6 +231,12 @@ struct platform_status_report {
 	int16_t heading;
 	struct v2 boom_pos;
 
+	struct {
+		absolute_time_t timestamp;
+		uint16_t range_mm;
+		uint8_t range_status;
+	} front_laser;
+
 	volatile bool complete;
 };
 
@@ -230,5 +245,7 @@ int platform_get_status(struct platform *platform, struct platform_status_report
 int platform_servo_set(struct platform *platform, int channel, uint16_t value);
 
 int platform_camera_capture(struct platform *platform, struct camera_buffer *into, camera_frame_cb cb, void *cb_data);
+
+int platform_vl53l0x_enable(struct platform *platform, int chan, bool enable);
 
 #endif /* __PLATFORM_H__ */

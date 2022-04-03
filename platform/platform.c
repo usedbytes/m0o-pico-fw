@@ -20,6 +20,7 @@
 #include "controller.h"
 #include "kinematics.h"
 #include "platform_camera.h"
+#include "platform_vl53l0x.h"
 
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000
@@ -322,7 +323,7 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	// hard_assert if the hardware alarm is already claimed
 	hard_assert(platform->alarm_pool);
 
-	i2c_bus_init(&platform->i2c_main, I2C_MAIN_BUS, 100000);
+	i2c_bus_init(&platform->i2c_main, I2C_MAIN_BUS, 400000);
 	gpio_set_function(I2C_MAIN_PIN_SDA, GPIO_FUNC_I2C);
 	gpio_set_function(I2C_MAIN_PIN_SCL, GPIO_FUNC_I2C);
 	gpio_pull_up(I2C_MAIN_PIN_SDA);
@@ -359,6 +360,11 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	platform->camera = platform_camera_init(platform, &platform->i2c_main);
 	if (platform->camera) {
 		platform->status |= PLATFORM_STATUS_CAMERA_PRESENT | PLATFORM_STATUS_CAMERA_OK;
+	}
+
+	platform->front_laser = platform_vl53l0x_init(platform, &platform->i2c_main);
+	if (platform->front_laser) {
+		platform->status |= PLATFORM_STATUS_FRONT_LASER_PRESENT | PLATFORM_STATUS_FRONT_LASER_OK;
 	}
 
 	struct fcontroller *c = &platform->boom_lift_controller;
@@ -1002,8 +1008,13 @@ static void __platform_get_status(struct platform *platform, struct platform_sta
 
 	__platform_boom_update_position(platform);
 	dst->boom_pos = platform->boom_current;
-	dst->status = platform->status;
 
+	if (platform->front_laser) {
+		platform_vl53l0x_get_status(platform->front_laser, &dst->front_laser.timestamp,
+				&dst->front_laser.range_mm, &dst->front_laser.range_status);
+	}
+
+	dst->status = platform->status;
 	dst->complete = true;
 }
 
@@ -1043,17 +1054,35 @@ void __platform_camera_capture(struct platform *platform, struct camera_buffer *
 	platform_camera_do_capture(platform->camera, into, cb, cb_data);
 }
 
+int platform_vl53l0x_enable(struct platform *platform, int chan, bool enable)
+{
+	if (chan != 0) {
+		return -1;
+	}
+
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_FRONT_LASER_SET_ENABLED,
+		.set_enabled = {
+			.enabled = enable,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
 void platform_run(struct platform *platform) {
 	// Kick off heading updates
-	if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
-		platform_update_heading(get_absolute_time(), platform);
-	}
+	//if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
+	//	platform_update_heading(get_absolute_time(), platform);
+	//}
 
 	while (1) {
 		struct platform_message msg;
 
 		queue_remove_blocking(&platform->queue, &msg);
 		do {
+			//log_printf(&util_logger, "platform handle: %d", msg.type);
+
 			switch (msg.type) {
 			case PLATFORM_MESSAGE_RUN:
 				msg.run.func(msg.run.scheduled, msg.run.arg);
@@ -1109,6 +1138,9 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_CAMERA_CAPTURE:
 				__platform_camera_capture(platform, msg.camera_capture.into, msg.camera_capture.cb, msg.camera_capture.cb_data);
+				break;
+			case PLATFORM_MESSAGE_FRONT_LASER_SET_ENABLED:
+				__platform_vl53l0x_set_enabled(platform->front_laser, msg.set_enabled.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

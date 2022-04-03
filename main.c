@@ -293,6 +293,8 @@ int main()
 
 	add_alarm_at(next_time, __timer_dummy_event_cb, NULL, false);
 
+	//platform_vl53l0x_enable(platform, 0, true);
+
 	while (1) {
 		control_event_get_blocking(&ev);
 
@@ -300,8 +302,13 @@ int main()
 		now = get_absolute_time();
 		if (to_us_since_boot(now) >= to_us_since_boot(next_time)) {
 			next_time = delayed_by_us(next_time, update_us);
-			platform_get_status(platform, &status_report);
-			run_tick = true;
+			int ret = platform_get_status(platform, &status_report);
+			if (ret) {
+				log_printf(&util_logger, "failed to send status req");
+				add_alarm_at(now, __timer_dummy_event_cb, NULL, true);
+			} else {
+				run_tick = true;
+			}
 		}
 
 		// Then handle the incoming events
@@ -347,6 +354,11 @@ int main()
 		if (run_tick) {
 			// Wait for any pending platform update
 			while (!status_report.complete);
+
+			log_printf(&util_logger, "Range: %"PRIu64" (%d) %d mm",
+					to_us_since_boot(status_report.front_laser.timestamp),
+					status_report.front_laser.range_status,
+					status_report.front_laser.range_mm);
 
 			if (current && current->tick) {
 				current->tick(current, platform, &status_report);

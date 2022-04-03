@@ -26,6 +26,7 @@ add_executable(rebound
 	platform/i2c_bus.c
 	platform/platform.c
 	platform/platform_camera.c
+	platform/platform_vl53l0x.c
 	platform/kinematics.c
 	platform/vl53l0x.c
 
