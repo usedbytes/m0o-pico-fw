@@ -12,8 +12,8 @@ set(CMAKE_CXX_STANDARD 17)
 pico_sdk_init()
 
 add_executable(rebound
-	camera_task.c
 	comm.c
+	host.c
 	input.c
 	log.c
 	main.c
@@ -25,6 +25,7 @@ add_executable(rebound
 	platform/controller.c
 	platform/i2c_bus.c
 	platform/platform.c
+	platform/platform_camera.c
 	platform/kinematics.c
 	platform/vl53l0x.c
 

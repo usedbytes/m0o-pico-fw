@@ -19,6 +19,7 @@
 #include "boom.h"
 #include "controller.h"
 #include "kinematics.h"
+#include "platform_camera.h"
 
 #define PLATFORM_MESSAGE_QUEUE_SIZE 32
 #define PLATFORM_HEADING_UPDATE_US  10000
@@ -353,6 +354,11 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	ret = bno055_init(&platform->bno055, &platform->i2c_main, BNO055_ADDR);
 	if (!ret) {
 		platform->status |= PLATFORM_STATUS_BNO055_PRESENT | PLATFORM_STATUS_BNO055_OK;
+	}
+
+	platform->camera = platform_camera_init(platform, &platform->i2c_main);
+	if (platform->camera) {
+		platform->status |= PLATFORM_STATUS_CAMERA_PRESENT | PLATFORM_STATUS_CAMERA_OK;
 	}
 
 	struct fcontroller *c = &platform->boom_lift_controller;
@@ -1014,6 +1020,29 @@ int platform_get_status(struct platform *platform, struct platform_status_report
 	return platform_send_message(platform, &msg);
 }
 
+int platform_camera_capture(struct platform *platform, struct camera_buffer *into, camera_frame_cb cb, void *cb_data)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_CAMERA_CAPTURE,
+		.camera_capture = {
+			.into = into,
+			.cb = cb,
+			.cb_data = cb_data,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+void __platform_camera_capture(struct platform *platform, struct camera_buffer *into, camera_frame_cb cb, void *cb_data)
+{
+	if (!platform->camera) {
+		return;
+	}
+
+	platform_camera_do_capture(platform->camera, into, cb, cb_data);
+}
+
 void platform_run(struct platform *platform) {
 	// Kick off heading updates
 	if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
@@ -1077,6 +1106,9 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_STATUS_REQUEST:
 				__platform_get_status(platform, msg.status_request.dst);
+				break;
+			case PLATFORM_MESSAGE_CAMERA_CAPTURE:
+				__platform_camera_capture(platform, msg.camera_capture.into, msg.camera_capture.cb, msg.camera_capture.cb_data);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

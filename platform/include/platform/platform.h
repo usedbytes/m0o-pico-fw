@@ -12,6 +12,7 @@
 #include "pico/util/queue.h"
 
 #include "bno055.h"
+#include "camera/camera.h"
 #include "chassis.h"
 #include "controller.h"
 #include "i2c_bus.h"
@@ -53,6 +54,7 @@ struct platform_message {
 #define PLATFORM_MESSAGE_BOOM_TRAJECTORY_ADJUST      17
 #define PLATFORM_MESSAGE_BOOM_SET_RAW     18
 #define PLATFORM_MESSAGE_STATUS_REQUEST   19
+#define PLATFORM_MESSAGE_CAMERA_CAPTURE   20
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -106,6 +108,11 @@ struct platform_message {
 		struct {
 			struct platform_status_report *dst;
 		} status_request;
+		struct {
+			struct camera_buffer *into;
+			camera_frame_cb cb;
+			void *cb_data;
+		} camera_capture;
 	};
 };
 
@@ -139,6 +146,8 @@ struct platform {
 #define PLATFORM_STATUS_IOE_OK              (1 << 3)
 #define PLATFORM_STATUS_BOOM_HOMED          (1 << 4)
 #define PLATFORM_STATUS_BOOM_TARGET_REACHED (1 << 5)
+#define PLATFORM_STATUS_CAMERA_PRESENT      (1 << 6)
+#define PLATFORM_STATUS_CAMERA_OK           (1 << 7)
 	uint32_t status;
 
 	struct i2c_bus i2c_main;
@@ -171,6 +180,8 @@ struct platform {
 		struct v2 unit;
 		float mag;
 	} trajectory;
+
+	struct platform_camera *camera;
 };
 
 int platform_init(struct platform *platform);
@@ -217,5 +228,7 @@ struct platform_status_report {
 int platform_get_status(struct platform *platform, struct platform_status_report *dst);
 
 int platform_servo_set(struct platform *platform, int channel, uint16_t value);
+
+int platform_camera_capture(struct platform *platform, struct camera_buffer *into, camera_frame_cb cb, void *cb_data);
 
 #endif /* __PLATFORM_H__ */

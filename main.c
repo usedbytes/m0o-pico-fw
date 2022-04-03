@@ -12,6 +12,7 @@
 #include "pico/util/queue.h"
 
 #include "comm.h"
+#include "host.h"
 #include "input.h"
 #include "log.h"
 #include "plan/planner.h"
@@ -30,6 +31,8 @@ const struct comm_command *const cmds[] = {
 	&util_logs_cmd,
 	&util_reboot_cmd,
 	&util_read_cmd,
+	&camera_host_comm_cmd,
+	&snapget_cmd,
 	&pid_set_cmd,
 };
 const unsigned int N_CMDS = (sizeof(cmds) / sizeof(cmds[0]));
@@ -270,6 +273,8 @@ int main()
 	platform = (struct platform *)multicore_fifo_pop_blocking();
 
 	log_printf(&util_logger, "platform_status: 0x%08x", platform_status);
+
+	host_init(platform);
 
 	// Only register comms after everything is initialised
 	comm_init(cmds, N_CMDS, UTIL_CMD_SYNC);
