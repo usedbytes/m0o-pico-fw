@@ -236,6 +236,11 @@ static void rc_task_handle_input(const struct planner_task *task, struct platfor
 		platform_vl53l0x_trigger_single(platform, 0);
 	}
 
+	if (input->buttons.pressed & BTN_L2) {
+		platform_heading_controller_set_enabled(platform, true);
+		platform_heading_controller_set(platform, 10, 10);
+	}
+
 	if (input->buttons.pressed & BTN_SQUARE) {
 		platform_servo_level(platform, true);
 	}

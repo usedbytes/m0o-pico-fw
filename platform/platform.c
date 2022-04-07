@@ -36,6 +36,8 @@
 #define BOOM_TRAJECTORY_CONTROLLER_TICK 50000
 #define MAX_TRAJECTORY_STEP 10
 
+#define HEADING_CONTROLLER_TICK 30000
+
 #define BNO055_ADDR 0x28
 
 #define CHASSIS_PIN_L_A 14
@@ -376,6 +378,11 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	c->out_min = -127;
 	c->out_max = 128;
 	fcontroller_set_tunings(c, 0.25, 0.002, 0, BOOM_EXTEND_CONTROLLER_TICK);
+
+	c = &platform->heading_controller;
+	c->out_min = -127;
+	c->out_max = 128;
+	fcontroller_set_tunings(c, 3.5, 0.1, 0.01, HEADING_CONTROLLER_TICK);
 
 	return ret;
 }
@@ -952,23 +959,6 @@ static void __platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t 
 	ioe_set_pwm_duty(&platform->ioe, pin, val);
 }
 
-int platform_all_stop(struct platform *platform)
-{
-	struct platform_message msg = {
-		.type = PLATFORM_MESSAGE_ALL_STOP,
-	};
-
-	return platform_send_message(platform, &msg);
-}
-
-static void __platform_all_stop(struct platform *platform)
-{
-	__platform_boom_trajectory_controller_set_enabled(platform, false);
-	__platform_boom_lift_controller_set_enabled(platform, false);
-	__platform_boom_extend_controller_set_enabled(platform, false);
-	__platform_servo_level_set_enabled(platform, false);
-}
-
 int platform_set_pid_coeffs(struct platform *platform, enum pid_controller_id id, float kp, float ki, float kd)
 {
 	struct platform_message msg = {
@@ -1099,6 +1089,138 @@ int platform_vl53l0x_set_continuous(struct platform *platform, int chan, bool en
 	return platform_send_message(platform, &msg);
 }
 
+static float normalise_angle(float degrees)
+{
+	while (degrees < -180.0) {
+		degrees += 360.0;
+	}
+
+	while (degrees > 180.0) {
+		degrees -= 360.0;
+	}
+
+	return degrees;
+}
+
+static void __platform_heading_controller_set(struct platform *platform, int8_t linear, float degrees)
+{
+	struct fcontroller *c = &platform->heading_controller;
+	platform->linear_speed = linear;
+	// TODO: How do we handle normalisation?
+	fcontroller_set(c, degrees);
+}
+
+int platform_heading_controller_set(struct platform *platform, int8_t linear, float degrees)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_HEADING_SET,
+		.heading_set = {
+			.linear_speed = linear,
+			.degrees = degrees,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_heading_controller_run(absolute_time_t scheduled, void *data);
+
+static void __platform_heading_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	if (enabled) {
+		if (!(platform->status & PLATFORM_STATUS_BNO055_PRESENT)) {
+			log_printf(&util_logger, "IMU not present");
+			return;
+		}
+
+		if (__controllers_are_enabled(platform, CONTROLLER_HEADING)) {
+			log_printf(&util_logger, "already enabled");
+			return;
+		}
+
+		int16_t current;
+		int ret = bno055_get_heading(&platform->bno055, &current);
+		if (ret) {
+			platform->status &= ~PLATFORM_STATUS_BNO055_OK;
+			log_printf(&util_logger, "couldn't get heading");
+			__platform_heading_controller_set_enabled(platform, false);
+			return;
+		}
+		float degrees = normalise_angle(current / 16.0);
+
+		struct fcontroller *c = &platform->heading_controller;
+		fcontroller_set(c, degrees);
+		fcontroller_reinit(c, degrees, 0);
+
+		__controllers_set_enabled(platform, CONTROLLER_HEADING);
+		platform_schedule_function(platform, platform_heading_controller_run, platform, get_absolute_time());
+	} else {
+		__controllers_set_disabled(platform, CONTROLLER_HEADING);
+		chassis_set(&platform->chassis, 0, 0);
+		log_printf(&util_logger, "heading_controller disabled");
+	}
+}
+
+int platform_heading_controller_set_enabled(struct platform *platform, bool enabled)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_HEADING_SET_ENABLED,
+		.set_enabled = {
+			.enabled = enabled,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void platform_heading_controller_run(absolute_time_t scheduled, void *data)
+{
+	struct platform *platform = data;
+	if (!__controllers_are_enabled(platform, CONTROLLER_HEADING)) {
+		return;
+	}
+
+	int16_t heading;
+	int ret = bno055_get_heading(&platform->bno055, &heading);
+	if (ret) {
+		platform->status &= ~PLATFORM_STATUS_BNO055_OK;
+		log_printf(&util_logger, "couldn't get heading");
+		return;
+	}
+	float current = heading / 16.0;
+
+	struct fcontroller *c = &platform->heading_controller;
+	float diff = c->setpoint - current;
+	current = c->setpoint + normalise_angle(diff);
+
+	float output = fcontroller_tick(c, current);
+	platform->angular_speed = clamp8(output);
+	chassis_set(&platform->chassis, platform->linear_speed, platform->angular_speed);
+
+	log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
+
+	platform_schedule_function(platform, platform_heading_controller_run, platform, scheduled + HEADING_CONTROLLER_TICK);
+}
+
+int platform_all_stop(struct platform *platform)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_ALL_STOP,
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void __platform_all_stop(struct platform *platform)
+{
+	__platform_boom_trajectory_controller_set_enabled(platform, false);
+	__platform_boom_lift_controller_set_enabled(platform, false);
+	__platform_boom_extend_controller_set_enabled(platform, false);
+	__platform_servo_level_set_enabled(platform, false);
+	__platform_heading_controller_set_enabled(platform, false);
+}
+
+
 void platform_run(struct platform *platform) {
 	// Kick off heading updates
 	//if (platform->status & PLATFORM_STATUS_BNO055_PRESENT) {
@@ -1170,6 +1292,12 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_LASER_TRIGGER:
 				__platform_laser_trigger(platform, msg.laser_trigger.channel, msg.laser_trigger.enabled, msg.laser_trigger.continuous);
+				break;
+			case PLATFORM_MESSAGE_HEADING_SET:
+				__platform_heading_controller_set(platform, msg.heading_set.linear_speed, msg.heading_set.degrees);
+				break;
+			case PLATFORM_MESSAGE_HEADING_SET_ENABLED:
+				__platform_heading_controller_set_enabled(platform, msg.set_enabled.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));

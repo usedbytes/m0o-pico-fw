@@ -56,6 +56,8 @@ struct platform_message {
 #define PLATFORM_MESSAGE_STATUS_REQUEST   19
 #define PLATFORM_MESSAGE_CAMERA_CAPTURE   20
 #define PLATFORM_MESSAGE_LASER_TRIGGER    21
+#define PLATFORM_MESSAGE_HEADING_SET      22
+#define PLATFORM_MESSAGE_HEADING_SET_ENABLED      23
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -122,6 +124,10 @@ struct platform_message {
 			bool enabled;
 			bool continuous;
 		} laser_trigger;
+		struct {
+			int8_t linear_speed;
+			float degrees;
+		} heading_set;
 	};
 };
 
@@ -177,11 +183,15 @@ struct platform {
 #define CONTROLLER_BOOM_TRAJECTORY (1 << 2)
 #define CONTROLLER_BOOM_FORK_LEVEL (1 << 3)
 #define CONTROLLER_FRONT_LASER     (1 << 4)
+#define CONTROLLER_HEADING         (1 << 5)
 	uint32_t controllers_enabled;
 
 	enum boom_home_state boom_home_state;
 	struct fcontroller boom_lift_controller;
 	struct fcontroller boom_extend_pos_controller;
+	struct fcontroller heading_controller;
+	int8_t linear_speed;
+	int8_t angular_speed;
 
 	absolute_time_t boom_timestamp;
 	struct v2 boom_current;
@@ -253,5 +263,8 @@ int platform_camera_capture(struct platform *platform, struct camera_buffer *int
 
 int platform_vl53l0x_trigger_single(struct platform *platform, int chan);
 int platform_vl53l0x_set_continuous(struct platform *platform, int chan, bool enable);
+
+int platform_heading_controller_set(struct platform *platform, int8_t linear, float degrees);
+int platform_heading_controller_set_enabled(struct platform *platform, bool enabled);
 
 #endif /* __PLATFORM_H__ */
