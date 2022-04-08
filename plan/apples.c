@@ -29,7 +29,7 @@ const struct v2 push_offset = {  60,   0 };
 const struct v2 lift_offset = {   0,  35 };
 const struct v2 pick_offset = { -60,   0 };
 
-static void apple_task_tick(const struct planner_task *ptask, struct platform *platform, struct platform_status_report *status)
+static void apple_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status)
 {
 	struct apple_task *task = (struct apple_task *)ptask;
 
@@ -89,13 +89,13 @@ static void apple_task_tick(const struct planner_task *ptask, struct platform *p
 	}
 }
 
-static void apple_task_on_start(const struct planner_task *ptask)
+static void apple_task_on_start(struct planner_task *ptask)
 {
 	struct apple_task *task = (struct apple_task *)ptask;
 	task->pick_state = PICK_STATE_START;
 }
 
-const struct planner_task *apples_get_task()
+struct planner_task *apples_get_task()
 {
 	static struct apple_task task = {
 		.base = {

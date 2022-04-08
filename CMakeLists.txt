@@ -31,6 +31,7 @@ add_executable(rebound
 	platform/vl53l0x.c
 
 	plan/apples.c
+	plan/trough.c
 )
 
 target_include_directories(rebound PRIVATE

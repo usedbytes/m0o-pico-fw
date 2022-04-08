@@ -54,10 +54,10 @@ static uint32_t handle_input(uint32_t *args_in, uint8_t *data_in, uint32_t *resp
 	//log_printf(&util_logger, "L: %2x,%2x R: %2x,%2x, Hat: %1x, Buttons: %04x",
 	//		state.lx, state.ly, state.rx, state.ry, state.hat, state.buttons);
 
-	state.axes.lx = hid_state.lx - 128;
-	state.axes.ly = hid_state.ly - 128;
-	state.axes.rx = hid_state.rx - 128;
-	state.axes.ry = hid_state.ry - 128;
+	state.axes.lx = hid_state.lx;
+	state.axes.ly = hid_state.ly;
+	state.axes.rx = hid_state.rx;
+	state.axes.ry = hid_state.ry;
 
 	uint8_t hat = 0;
 	if (hid_state.hat <= 7) {

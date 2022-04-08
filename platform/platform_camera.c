@@ -40,6 +40,7 @@ static int __i2c_read_blocking(void *i2c_handle, uint8_t addr, uint8_t *dst, siz
 
 int platform_camera_do_capture(struct platform_camera *cam, struct camera_buffer *into, camera_frame_cb cb, void *cb_data)
 {
+	//log_printf(&util_logger, "capture into %p", into);
 	int ret = camera_capture_with_cb(&cam->camera, into, true, cb, cb_data);
 	if (ret) {
 		log_printf(&util_logger, "platform_camera_capture failed: %d", ret);

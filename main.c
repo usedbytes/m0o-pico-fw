@@ -17,6 +17,7 @@
 #include "log.h"
 #include "plan/planner.h"
 #include "plan/apples.h"
+#include "plan/trough.h"
 #include "platform/platform.h"
 #include "util.h"
 
@@ -169,7 +170,7 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 	platform_set_pid_coeffs(platform, ev->id, ev->kp, ev->ki, ev->kd);
 }
 
-static void rc_task_handle_input(const struct planner_task *task, struct platform *platform, struct input_state *input)
+static void rc_task_handle_input(struct planner_task *task, struct platform *platform, struct input_state *input)
 {
 	static uint16_t flap_servo = 5000;
 	if ((input->hat.held == 0) && input->hat.released) {
@@ -202,7 +203,7 @@ static void rc_task_handle_input(const struct planner_task *task, struct platfor
 		} else if (input->buttons.held & (1 << BTN_BIT_R1)) {
 #define SERVO_STEP 50
 #define GRAIN_FLAP_OPEN   4850
-#define GRAIN_FLAP_CLOSED 2800
+#define GRAIN_FLAP_CLOSED 3200
 			if (input->hat.pressed & HAT_LEFT) {
 				flap_servo = GRAIN_FLAP_CLOSED;
 			}
@@ -248,9 +249,13 @@ static void rc_task_handle_input(const struct planner_task *task, struct platfor
 	if ((input->buttons.pressed & BTN_TRIANGLE) && input->buttons.held & (1 << BTN_BIT_START)) {
 		platform_boom_home(platform);
 	}
+
+	int8_t linear = clamp8(-(input->axes.ly - 128));
+	int8_t rot = clamp8(-(input->axes.rx - 128));
+	platform_set_velocity(platform, linear, rot);
 }
 
-void rc_task_tick(const struct planner_task *task, struct platform *platform, struct platform_status_report *status)
+void rc_task_tick(struct planner_task *task, struct platform *platform, struct platform_status_report *status)
 {
 #if 0
 	log_printf(&util_logger, "Status: %x, heading: %3.2f, boom: %3.2f,%3.2f",
@@ -290,9 +295,10 @@ int main()
 
 	struct control_event ev;
 	struct input_state *input;
-	const struct planner_task *current = &rc_task;
+	struct planner_task *current = &rc_task;
 
-	const struct planner_task *apples_task = apples_get_task();
+	struct planner_task *apples_task = apples_get_task();
+	struct planner_task *trough_task = trough_get_task(platform);
 
 	const uint32_t update_us = 20000;
 	absolute_time_t now = get_absolute_time();
@@ -347,7 +353,13 @@ int main()
 				}
 
 				if (input->buttons.released & BTN_HEART) {
+					/*
 					current = apples_task;
+					if (current && current->on_start) {
+						current->on_start(current);
+					}
+					*/
+					current = trough_task;
 					if (current && current->on_start) {
 						current->on_start(current);
 					}

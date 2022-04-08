@@ -54,7 +54,7 @@
 #define I2C_AUX_PIN_SCL   3
 
 #define GRAIN_FLAP_OPEN   4850
-#define GRAIN_FLAP_CLOSED 2800
+#define GRAIN_FLAP_CLOSED 2850
 
 static inline bool __controllers_are_enabled(struct platform *platform, uint32_t controller_mask)
 {
@@ -1157,6 +1157,7 @@ static void __platform_heading_controller_set_enabled(struct platform *platform,
 	} else {
 		__controllers_set_disabled(platform, CONTROLLER_HEADING);
 		chassis_set(&platform->chassis, 0, 0);
+		platform->linear_speed = 0;
 		log_printf(&util_logger, "heading_controller disabled");
 	}
 }
@@ -1197,7 +1198,7 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 	platform->angular_speed = clamp8(output);
 	chassis_set(&platform->chassis, platform->linear_speed, platform->angular_speed);
 
-	log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
+	//log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
 
 	platform_schedule_function(platform, platform_heading_controller_run, platform, scheduled + HEADING_CONTROLLER_TICK);
 }
@@ -1218,6 +1219,7 @@ static void __platform_all_stop(struct platform *platform)
 	__platform_boom_extend_controller_set_enabled(platform, false);
 	__platform_servo_level_set_enabled(platform, false);
 	__platform_heading_controller_set_enabled(platform, false);
+	platform->linear_speed = 0;
 }
 
 
