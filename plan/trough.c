@@ -17,13 +17,13 @@
 #include "camera/format.h"
 #include "platform/platform.h"
 
-enum seek_state {
-	SEEK_APPROACH = 0,
-	SEEK_PROX,
-	SEEK_BOOM_POSITION,
-	SEEK_OPEN_FLAP,
-	SEEK_WAIT_FOR_GRAIN,
-	SEEK_DONE,
+enum trough_state {
+	TROUGH_APPROACH = 0,
+	TROUGH_PROX,
+	TROUGH_BOOM_POSITION,
+	TROUGH_OPEN_FLAP,
+	TROUGH_WAIT_FOR_GRAIN,
+	TROUGH_DONE,
 };
 
 struct trough_task {
@@ -32,9 +32,9 @@ struct trough_task {
 	struct camera_buffer *buf;
 	volatile bool frame_done;
 	int left, right, mid, bottom;
-	absolute_time_t last_range_ts;
+	absolute_time_t timestamp;
 
-	enum seek_state state;
+	enum trough_state state;
 };
 
 const uint8_t threshold = 10;
@@ -172,69 +172,145 @@ static void request_frame(struct trough_task *task)
 	platform_camera_capture(task->platform, task->buf, trough_camera_cb, task);
 }
 
+static void trough_approach(struct trough_task *task, struct platform_status_report *status)
+{
+	const float deg_per_pixel = 0.835;
+	const int bottom_line = 58;
+	const int min_width = 2;
+	struct platform *platform = task->platform;
+
+	if (!task->frame_done) {
+		return;
+	}
+
+	task->frame_done = false;
+	task->mid = find_red_blob(task->buf, &task->left, &task->right, &task->bottom);
+	log_printf(&util_logger, "frame done: %d, %d, %d, %d", task->left, task->mid, task->right, task->bottom);
+
+	float current_heading = status->heading / 16.0;
+
+	// Try and check if we got a good read
+	if ((task->right - task->left) <= min_width) {
+		// TODO: What to do? Add a searching state?
+		platform_heading_controller_set(platform, 10, current_heading);
+		request_frame(task);
+		return;
+	}
+
+	// Use vertical postiion to detect rough distance
+	if (task->bottom >= bottom_line) {
+		log_printf(&util_logger, "prox!");
+		platform_heading_controller_set_enabled(platform, false);
+
+		task->timestamp = get_absolute_time();
+		task->state = TROUGH_PROX;
+		platform_vl53l0x_trigger_single(platform, 0);
+		return;
+	}
+
+	float diff = (task->left - 20) * deg_per_pixel;
+	platform_heading_controller_set(platform, 20, current_heading + diff);
+
+	request_frame(task);
+}
+
+static void trough_prox(struct trough_task *task, struct platform_status_report *status)
+{
+	struct platform *platform = task->platform;
+	const int target_distance = 90;
+
+	if (status->front_laser.timestamp <= task->timestamp) {
+		// Range not measured yet
+		return;
+	}
+
+	log_printf(&util_logger, "prox: %d mm", status->front_laser.range_mm);
+
+	if (status->front_laser.range_mm > target_distance) {
+		// Get a bit closer
+		task->timestamp = get_absolute_time();
+		platform_vl53l0x_trigger_single(platform, 0);
+		platform_set_velocity(platform, 5, 0);
+		return;
+	}
+
+	platform_set_velocity(platform, 0, 0);
+	task->state = TROUGH_BOOM_POSITION;
+	task->timestamp = get_absolute_time();
+	platform_boom_trajectory_controller_adjust_target(platform, (struct v2){ status->front_laser.range_mm - 55, 40 },
+			TRAJECTORY_ADJUST_SET_ABSOLUTE);
+	platform_boom_trajectory_controller_set_enabled(platform, true);
+}
+
+static void trough_boom_position(struct trough_task *task, struct platform_status_report *status)
+{
+	struct platform *platform = task->platform;
+	const int64_t timeout_ns = 2000000;
+	const int range_slop = 30;
+	absolute_time_t now = get_absolute_time();
+	int64_t diff = absolute_time_diff_us(task->timestamp, now);
+
+	float x = status->boom_pos.x;
+	bool timeout = diff > timeout_ns;
+	bool in_range = (x > ((status->front_laser.range_mm - range_slop)));
+
+	if ((status->status & PLATFORM_STATUS_BOOM_TARGET_REACHED) || (timeout && in_range)) {
+		log_printf(&util_logger, "Boom positioned!");
+		platform_boom_trajectory_controller_set_enabled(platform, false);
+		task->state = TROUGH_OPEN_FLAP;
+		return;
+	}
+}
+
+static void trough_open_flap(struct trough_task *task, struct platform_status_report *status)
+{
+	struct platform *platform = task->platform;
+
+#define GRAIN_FLAP_OPEN   4850
+	log_printf(&util_logger, "open flap!");
+	platform_ioe_set(platform, 2, GRAIN_FLAP_OPEN);
+	task->state = TROUGH_WAIT_FOR_GRAIN;
+	task->timestamp = get_absolute_time();
+}
+
+static void trough_wait_for_grain(struct trough_task *task, struct platform_status_report *status)
+{
+	const int grain_drop_ms = 3000;
+	struct platform *platform = task->platform;
+
+#define GRAIN_FLAP_CLOSED 3200
+	absolute_time_t now = get_absolute_time();
+	int64_t diff = absolute_time_diff_us(task->timestamp, now);
+	log_printf(&util_logger, "waiting: %"PRId64, diff);
+	if (diff >= grain_drop_ms * 1000) {
+		log_printf(&util_logger, "close flap!");
+		platform_ioe_set(platform, 2, GRAIN_FLAP_CLOSED);
+		task->state = TROUGH_DONE;
+	}
+}
+
 static void trough_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status)
 {
 	struct trough_task *task = (struct trough_task *)ptask;
-	const float deg_per_pixel = 0.835;
 
-	if ((task->state == SEEK_APPROACH) && (task->frame_done)) {
-		task->frame_done = false;
-		task->mid = find_red_blob(task->buf, &task->left, &task->right, &task->bottom);
-		log_printf(&util_logger, "frame done: %d, %d, %d, %d", task->left, task->mid, task->right, task->bottom);
-
-		float current_heading = status->heading / 16.0;
-		// Try and check if we got a good read
-		if ((task->right - task->left) > 2) {
-			if (task->bottom >= 58) {
-				log_printf(&util_logger, "prox!");
-				platform_heading_controller_set_enabled(platform, false);
-
-				task->last_range_ts = get_absolute_time();
-				task->state = SEEK_PROX;
-				platform_vl53l0x_trigger_single(platform, 0);
-				return;
-			} else {
-				float diff = (task->left - 20) * deg_per_pixel;
-				platform_heading_controller_set(platform, 20, current_heading + diff);
-			}
-		} else {
-			// TODO: What to do? Add a searching state?
-			platform_heading_controller_set(platform, 10, current_heading);
-		}
-
-		request_frame(task);
-	} else if ((task->state == SEEK_PROX) && (task->last_range_ts < status->front_laser.timestamp)) {
-		log_printf(&util_logger, "prox: %d mm", status->front_laser.range_mm);
-
-		if (status->front_laser.range_mm < 20 || status->front_laser.range_mm > 200) {
-				task->last_range_ts = status->front_laser.timestamp;
-				platform_vl53l0x_trigger_single(platform, 0);
-				return;
-		}
-
-		task->state = SEEK_BOOM_POSITION;
-		platform_boom_trajectory_controller_adjust_target(platform, (struct v2){ status->front_laser.range_mm - 40, 40 },
-				TRAJECTORY_ADJUST_SET_ABSOLUTE);
-		platform_boom_trajectory_controller_set_enabled(platform, true);
-	} else if ((task->state == SEEK_BOOM_POSITION) && (status->status & PLATFORM_STATUS_BOOM_TARGET_REACHED)) {
-		log_printf(&util_logger, "Boom positioned!");
-		task->state = SEEK_OPEN_FLAP;
-	} else if ((task->state == SEEK_OPEN_FLAP)) {
-#define GRAIN_FLAP_OPEN   4850
-		log_printf(&util_logger, "open flap!");
-		platform_ioe_set(platform, 2, GRAIN_FLAP_OPEN);
-		task->state = SEEK_WAIT_FOR_GRAIN;
-		task->last_range_ts = get_absolute_time();
-	} else if (task->state == SEEK_WAIT_FOR_GRAIN) {
-#define GRAIN_FLAP_CLOSED 3200
-		absolute_time_t now = get_absolute_time();
-		int64_t diff = absolute_time_diff_us(task->last_range_ts, now);
-		log_printf(&util_logger, "waiting: %"PRId64, diff);
-		if (diff >= 4000000) {
-			log_printf(&util_logger, "close flap!");
-			platform_ioe_set(platform, 2, GRAIN_FLAP_CLOSED);
-			task->state = SEEK_DONE;
-		}
+	switch (task->state) {
+	case TROUGH_APPROACH:
+		trough_approach(task, status);
+		break;
+	case TROUGH_PROX:
+		trough_prox(task, status);
+		break;
+	case TROUGH_BOOM_POSITION:
+		trough_boom_position(task, status);
+		break;
+	case TROUGH_OPEN_FLAP:
+		trough_open_flap(task, status);
+		break;
+	case TROUGH_WAIT_FOR_GRAIN:
+		trough_wait_for_grain(task, status);
+		break;
+	case TROUGH_DONE:
+		break;
 	}
 }
 
@@ -242,7 +318,7 @@ static void trough_task_on_start(struct planner_task *ptask)
 {
 	struct trough_task *task = (struct trough_task *)ptask;
 
-	task->state = SEEK_APPROACH;
+	task->state = TROUGH_APPROACH;
 	platform_heading_controller_set_enabled(task->platform, true);
 	request_frame(task);
 }
