@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include <inttypes.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -18,11 +19,18 @@
 #include "platform/platform.h"
 
 enum trough_state {
-	TROUGH_APPROACH = 0,
+	TROUGH_SET_EAST,
+	TROUGH_POINT,
+	TROUGH_WAIT_FOR_POINT,
+	TROUGH_APPROACH,
 	TROUGH_PROX,
 	TROUGH_BOOM_POSITION,
 	TROUGH_OPEN_FLAP,
 	TROUGH_WAIT_FOR_GRAIN,
+	TROUGH_GO_HOME,
+	TROUGH_WAIT_FOR_HOME,
+	TROUGH_WAIT_AT_HOME,
+	TROUGH_NEXT,
 	TROUGH_DONE,
 };
 
@@ -35,9 +43,86 @@ struct trough_task {
 	absolute_time_t timestamp;
 
 	enum trough_state state;
+
+	int trough_idx;
+	float east;
+	float heading;
 };
 
 const uint8_t threshold = 10;
+
+const struct v2 barn = { 200, 300 };
+const struct v2 troughs[] = {
+	{ 200, 875 },
+	{ 1250, 1250 },
+	{ 1300, 375 },
+};
+const int n_troughs = sizeof(troughs) / sizeof(troughs[0]);
+
+static void trough_camera_cb(struct camera_buffer *buf, void *p)
+{
+	struct trough_task *task = (struct trough_task *)p;
+
+	//log_printf(&util_logger, "capture cb. %p", buf);
+
+	task->frame_done = true;
+}
+
+static void request_frame(struct trough_task *task)
+{
+	task->frame_done = false;
+	platform_camera_capture(task->platform, task->buf, trough_camera_cb, task);
+}
+
+static void trough_set_east(struct trough_task *task, struct platform_status_report *status)
+{
+	struct platform *platform = task->platform;
+	task->east = status->heading / 16.0;
+	platform_heading_controller_set_enabled(platform, true);
+	task->state = TROUGH_POINT;
+
+	log_printf(&util_logger, "east: %3.2f", task->east);
+}
+
+static void trough_point(struct trough_task *task, struct platform_status_report *status)
+{
+	struct platform *platform = task->platform;
+	float dx = troughs[task->trough_idx].x - barn.x;
+	float dy = troughs[task->trough_idx].y - barn.y;
+
+	float delta = (atanf(dy / dx) * 180 / 3.14159);
+	log_printf(&util_logger, "dy, dx %f, %f, delta: %3.2f", dy, dx, delta);
+	task->heading = task->east - (delta + 10);
+	platform_heading_controller_set_enabled(platform, true);
+	platform_heading_controller_set(platform, 10, task->heading);
+	task->state = TROUGH_WAIT_FOR_POINT;
+
+	log_printf(&util_logger, "heading: %3.2f", task->heading);
+}
+
+static float normalise_angle(float degrees)
+{
+	while (degrees < -180.0) {
+		degrees += 360.0;
+	}
+
+	while (degrees > 180.0) {
+		degrees -= 360.0;
+	}
+
+	return degrees;
+}
+
+static void trough_wait_for_point(struct trough_task *task, struct platform_status_report *status)
+{
+	const float cone_angle = 5;
+	float diff = normalise_angle((status->heading / 16.0) - task->heading);
+	log_printf(&util_logger, "%3.2f -> %3.2f diff: %3.2f", status->heading, task->heading, diff);
+	if ((diff >= -cone_angle) && (diff <= cone_angle)) {
+		task->state = TROUGH_APPROACH;
+		request_frame(task);
+	}
+}
 
 // Search for the furthest left and furthest right pixels in 'row'
 // which are brighter than 'maxval - threshold', starting at 'start_idx'
@@ -157,21 +242,6 @@ static int find_red_blob(struct camera_buffer *buf, int *left, int *right, int *
 	return mid;
 }
 
-static void trough_camera_cb(struct camera_buffer *buf, void *p)
-{
-	struct trough_task *task = (struct trough_task *)p;
-
-	//log_printf(&util_logger, "capture cb. %p", buf);
-
-	task->frame_done = true;
-}
-
-static void request_frame(struct trough_task *task)
-{
-	task->frame_done = false;
-	platform_camera_capture(task->platform, task->buf, trough_camera_cb, task);
-}
-
 static void trough_approach(struct trough_task *task, struct platform_status_report *status)
 {
 	const float deg_per_pixel = 0.835;
@@ -209,7 +279,7 @@ static void trough_approach(struct trough_task *task, struct platform_status_rep
 	}
 
 	float diff = (task->left - 20) * deg_per_pixel;
-	platform_heading_controller_set(platform, 20, current_heading + diff);
+	platform_heading_controller_set(platform, 30, current_heading + diff);
 
 	request_frame(task);
 }
@@ -217,7 +287,7 @@ static void trough_approach(struct trough_task *task, struct platform_status_rep
 static void trough_prox(struct trough_task *task, struct platform_status_report *status)
 {
 	struct platform *platform = task->platform;
-	const int target_distance = 90;
+	const int target_distance = 100;
 
 	if (status->front_laser.timestamp <= task->timestamp) {
 		// Range not measured yet
@@ -285,15 +355,50 @@ static void trough_wait_for_grain(struct trough_task *task, struct platform_stat
 	if (diff >= grain_drop_ms * 1000) {
 		log_printf(&util_logger, "close flap!");
 		platform_ioe_set(platform, 2, GRAIN_FLAP_CLOSED);
-		task->state = TROUGH_DONE;
+		task->state = TROUGH_GO_HOME;
 	}
 }
+
+static void trough_go_home(struct trough_task *task, struct platform_status_report *status)
+{
+	struct platform *platform = task->platform;
+
+	platform_heading_controller_set(platform, -30, task->heading);
+	platform_heading_controller_set_enabled(platform, true);
+	task->state = TROUGH_WAIT_FOR_HOME;
+
+	log_printf(&util_logger, "heading: %3.2f", task->heading);
+	
+}
+
+static void trough_wait_at_home(struct trough_task *task, struct platform_status_report *status)
+{
+	const int wait_time_ms = 2000;
+
+	absolute_time_t now = get_absolute_time();
+	int64_t diff = absolute_time_diff_us(task->timestamp, now);
+	log_printf(&util_logger, "waiting: %"PRId64, diff);
+	if (diff >= wait_time_ms * 1000) {
+		log_printf(&util_logger, "let's go!");
+		task->state = TROUGH_POINT;
+	}
+}
+
 
 static void trough_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status)
 {
 	struct trough_task *task = (struct trough_task *)ptask;
 
 	switch (task->state) {
+	case TROUGH_SET_EAST:
+		trough_set_east(task, status);
+		break;
+	case TROUGH_POINT:
+		trough_point(task, status);
+		break;
+	case TROUGH_WAIT_FOR_POINT:
+		trough_wait_for_point(task, status);
+		break;
 	case TROUGH_APPROACH:
 		trough_approach(task, status);
 		break;
@@ -309,8 +414,34 @@ static void trough_task_tick(struct planner_task *ptask, struct platform *platfo
 	case TROUGH_WAIT_FOR_GRAIN:
 		trough_wait_for_grain(task, status);
 		break;
+	case TROUGH_GO_HOME:
+		trough_go_home(task, status);
+		break;
+	case TROUGH_WAIT_AT_HOME:
+		trough_wait_at_home(task, status);
+		break;
 	case TROUGH_DONE:
 		break;
+	}
+}
+
+static void trough_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
+{
+	struct trough_task *task = (struct trough_task *)ptask;
+
+	if ((task->state == TROUGH_WAIT_FOR_HOME) && (input->buttons.pressed & BTN_TRIANGLE)) {
+		log_printf(&util_logger, "reached home");
+		task->trough_idx++;
+		if (task->trough_idx >= n_troughs) {
+			task->trough_idx = 0;
+			task->state = TROUGH_DONE;
+		} else {
+		task->timestamp = get_absolute_time();
+			task->state = TROUGH_WAIT_AT_HOME;
+		}
+
+		platform_heading_controller_set_enabled(platform, false);
+		platform_set_velocity(platform, 0, 0);
 	}
 }
 
@@ -318,7 +449,8 @@ static void trough_task_on_start(struct planner_task *ptask)
 {
 	struct trough_task *task = (struct trough_task *)ptask;
 
-	task->state = TROUGH_APPROACH;
+	task->state = TROUGH_SET_EAST;
+	task->trough_idx = 0;
 	platform_heading_controller_set_enabled(task->platform, true);
 	request_frame(task);
 }
@@ -327,6 +459,7 @@ struct planner_task *trough_get_task(struct platform *platform)
 {
 	static struct trough_task task = {
 		.base = {
+			.handle_input = trough_task_handle_input,
 			.on_start = trough_task_on_start,
 			.tick = trough_task_tick,
 		},
