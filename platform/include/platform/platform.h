@@ -165,6 +165,8 @@ struct platform {
 #define PLATFORM_STATUS_CAMERA_OK           (1 << 7)
 #define PLATFORM_STATUS_FRONT_LASER_PRESENT (1 << 8)
 #define PLATFORM_STATUS_FRONT_LASER_OK      (1 << 9)
+#define PLATFORM_STATUS_REAR_LASER_PRESENT  (1 << 10)
+#define PLATFORM_STATUS_REAR_LASER_OK       (1 << 11)
 	uint32_t status;
 
 	struct i2c_bus i2c_main;
@@ -206,6 +208,7 @@ struct platform {
 	struct platform_camera *camera;
 
 	struct platform_vl53l0x *front_laser;
+	struct platform_vl53l0x *rear_laser;
 };
 
 int platform_init(struct platform *platform);
@@ -251,6 +254,12 @@ struct platform_status_report {
 		uint16_t range_mm;
 		uint8_t range_status;
 	} front_laser;
+
+	struct {
+		absolute_time_t timestamp;
+		uint16_t range_mm;
+		uint8_t range_status;
+	} rear_laser;
 
 	volatile bool complete;
 };

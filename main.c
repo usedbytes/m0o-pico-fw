@@ -234,7 +234,9 @@ static void rc_task_handle_input(struct planner_task *task, struct platform *pla
 	}
 
 	if (input->buttons.pressed & BTN_R2) {
+		log_printf(&util_logger, "request lasers");
 		platform_vl53l0x_trigger_single(platform, 0);
+		platform_vl53l0x_trigger_single(platform, 1);
 	}
 
 	if (input->buttons.pressed & BTN_L2) {
@@ -376,12 +378,12 @@ int main()
 			// Wait for any pending platform update
 			while (!status_report.complete);
 
-			if (status_report.front_laser.timestamp != last_range) {
+			if (status_report.rear_laser.timestamp != last_range) {
 				log_printf(&util_logger, "Range: %"PRIu64" (%d) %d mm",
-						to_us_since_boot(status_report.front_laser.timestamp),
-						status_report.front_laser.range_status,
-						status_report.front_laser.range_mm);
-				last_range = status_report.front_laser.timestamp;
+						to_us_since_boot(status_report.rear_laser.timestamp),
+						status_report.rear_laser.range_status,
+						status_report.rear_laser.range_mm);
+				last_range = status_report.rear_laser.timestamp;
 			}
 
 			if (current && current->tick) {

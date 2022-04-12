@@ -369,6 +369,11 @@ int platform_init(struct platform *platform /*, platform_config*/)
 		platform->status |= PLATFORM_STATUS_FRONT_LASER_PRESENT | PLATFORM_STATUS_FRONT_LASER_OK;
 	}
 
+	platform->rear_laser = platform_vl53l0x_init(platform, &platform->i2c_aux);
+	if (platform->rear_laser) {
+		platform->status |= PLATFORM_STATUS_REAR_LASER_PRESENT | PLATFORM_STATUS_REAR_LASER_OK;
+	}
+
 	struct fcontroller *c = &platform->boom_lift_controller;
 	c->out_min = -127;
 	c->out_max = 128;
@@ -1004,6 +1009,11 @@ static void __platform_get_status(struct platform *platform, struct platform_sta
 				&dst->front_laser.range_mm, &dst->front_laser.range_status);
 	}
 
+	if (platform->rear_laser) {
+		platform_vl53l0x_get_status(platform->rear_laser, &dst->rear_laser.timestamp,
+				&dst->rear_laser.range_mm, &dst->rear_laser.range_status);
+	}
+
 	dst->status = platform->status;
 	dst->complete = true;
 }
@@ -1046,18 +1056,22 @@ void __platform_camera_capture(struct platform *platform, struct camera_buffer *
 
 static void __platform_laser_trigger(struct platform *platform, int chan, bool enabled, bool continuous)
 {
-	if (chan != 0) {
-		return;
+	struct platform_vl53l0x *sens = NULL;
+
+	if (chan == 0) {
+		sens = platform->front_laser;
+	} else if (chan == 1) {
+		sens = platform->rear_laser;
 	}
 
-	if (!platform->front_laser) {
+	if (!sens) {
 		return;
 	}
 
 	if (continuous) {
-		__platform_vl53l0x_set_continuous(platform->front_laser, enabled);
+		__platform_vl53l0x_set_continuous(sens, enabled);
 	} else {
-		__platform_vl53l0x_trigger_single(platform->front_laser);
+		__platform_vl53l0x_trigger_single(sens);
 	}
 }
 
