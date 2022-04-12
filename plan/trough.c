@@ -365,10 +365,49 @@ static void trough_go_home(struct trough_task *task, struct platform_status_repo
 
 	platform_heading_controller_set(platform, -30, task->heading);
 	platform_heading_controller_set_enabled(platform, true);
+	platform_vl53l0x_trigger_single(platform, 1);
+
+	platform_boom_trajectory_controller_adjust_target(platform, (struct v2){ 30, 90 },
+			TRAJECTORY_ADJUST_SET_ABSOLUTE);
+	platform_boom_trajectory_controller_set_enabled(platform, true);
+
 	task->state = TROUGH_WAIT_FOR_HOME;
 
 	log_printf(&util_logger, "heading: %3.2f", task->heading);
 	
+}
+
+static void trough_wait_for_home(struct trough_task *task, struct platform_status_report *status)
+{
+	const int target_distance = 200;
+	struct platform *platform = task->platform;
+
+	if (status->rear_laser.timestamp <= task->timestamp) {
+		// Range not measured yet
+		return;
+	}
+
+	log_printf(&util_logger, "rear: %d mm", status->rear_laser.range_mm);
+
+	if (status->rear_laser.range_mm <= target_distance) {
+		log_printf(&util_logger, "reached home");
+
+		task->trough_idx++;
+		if (task->trough_idx >= n_troughs) {
+			task->trough_idx = 0;
+			task->state = TROUGH_DONE;
+		} else {
+			task->timestamp = get_absolute_time();
+			task->state = TROUGH_WAIT_AT_HOME;
+		}
+
+		platform_heading_controller_set_enabled(platform, false);
+		platform_set_velocity(platform, 0, 0);
+		return;
+	}
+
+	task->timestamp = get_absolute_time();
+	platform_vl53l0x_trigger_single(platform, 1);
 }
 
 static void trough_wait_at_home(struct trough_task *task, struct platform_status_report *status)
@@ -417,6 +456,9 @@ static void trough_task_tick(struct planner_task *ptask, struct platform *platfo
 	case TROUGH_GO_HOME:
 		trough_go_home(task, status);
 		break;
+	case TROUGH_WAIT_FOR_HOME:
+		trough_wait_for_home(task, status);
+		break;
 	case TROUGH_WAIT_AT_HOME:
 		trough_wait_at_home(task, status);
 		break;
@@ -436,7 +478,7 @@ static void trough_task_handle_input(struct planner_task *ptask, struct platform
 			task->trough_idx = 0;
 			task->state = TROUGH_DONE;
 		} else {
-		task->timestamp = get_absolute_time();
+			task->timestamp = get_absolute_time();
 			task->state = TROUGH_WAIT_AT_HOME;
 		}
 
