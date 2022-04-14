@@ -51,10 +51,10 @@ struct trough_task {
 
 const uint8_t threshold = 10;
 
-const struct v2 barn = { 200, 300 };
+const struct v2 barn = { 100, 100 };
 const struct v2 troughs[] = {
-	{ 200, 875 },
-	{ 1250, 1250 },
+	{ 150, 875 },
+	{ 1300, 1300 },
 	{ 1300, 375 },
 };
 const int n_troughs = sizeof(troughs) / sizeof(troughs[0]);
@@ -86,15 +86,21 @@ static void trough_set_east(struct trough_task *task, struct platform_status_rep
 
 static void trough_point(struct trough_task *task, struct platform_status_report *status)
 {
+	const int extra_amount = 0;
 	struct platform *platform = task->platform;
 	float dx = troughs[task->trough_idx].x - barn.x;
 	float dy = troughs[task->trough_idx].y - barn.y;
 
-	float delta = (atanf(dy / dx) * 180 / 3.14159);
-	log_printf(&util_logger, "dy, dx %f, %f, delta: %3.2f", dy, dx, delta);
-	task->heading = task->east - (delta + 10);
+	float delta = (atan2f(dy, dx) * 180 / 3.14159);
+	float target_heading = task->east - delta;
+	float diff = target_heading - (status->heading / 16.0);
+	float extra = copysignf(extra_amount, diff);
+
+	log_printf(&util_logger, "dy, dx %f, %f, delta: %3.2f, diff: %3.2f", dy, dx, delta, diff);
+
+	task->heading = target_heading;
 	platform_heading_controller_set_enabled(platform, true);
-	platform_heading_controller_set(platform, 10, task->heading);
+	platform_heading_controller_set(platform, 10, task->heading + extra);
 	task->state = TROUGH_WAIT_FOR_POINT;
 
 	log_printf(&util_logger, "heading: %3.2f", task->heading);
@@ -345,7 +351,7 @@ static void trough_open_flap(struct trough_task *task, struct platform_status_re
 
 static void trough_wait_for_grain(struct trough_task *task, struct platform_status_report *status)
 {
-	const int grain_drop_ms = 3000;
+	const int grain_drop_ms = 3300;
 	struct platform *platform = task->platform;
 
 #define GRAIN_FLAP_CLOSED 3200
@@ -374,12 +380,11 @@ static void trough_go_home(struct trough_task *task, struct platform_status_repo
 	task->state = TROUGH_WAIT_FOR_HOME;
 
 	log_printf(&util_logger, "heading: %3.2f", task->heading);
-	
 }
 
 static void trough_wait_for_home(struct trough_task *task, struct platform_status_report *status)
 {
-	const int target_distance = 200;
+	const int target_distance = 230;
 	struct platform *platform = task->platform;
 
 	if (status->rear_laser.timestamp <= task->timestamp) {
