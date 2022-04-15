@@ -1204,6 +1204,8 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 	}
 	float current = heading / 16.0;
 
+	//log_printf(&util_logger, "current heading raw: %3.2f", current);
+
 	struct fcontroller *c = &platform->heading_controller;
 	float diff = c->setpoint - current;
 	current = c->setpoint + normalise_angle(diff);
@@ -1212,7 +1214,7 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 	platform->angular_speed = clamp8(output);
 	chassis_set(&platform->chassis, platform->linear_speed, platform->angular_speed);
 
-	//log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
+	log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
 
 	platform_schedule_function(platform, platform_heading_controller_run, platform, scheduled + HEADING_CONTROLLER_TICK);
 }

@@ -30,7 +30,6 @@ enum trough_state {
 	TROUGH_GO_HOME,
 	TROUGH_WAIT_FOR_HOME,
 	TROUGH_WAIT_AT_HOME,
-	TROUGH_NEXT,
 	TROUGH_DONE,
 };
 
@@ -47,17 +46,28 @@ struct trough_task {
 	int trough_idx;
 	float east;
 	float heading;
+	float return_heading;
 };
 
 const uint8_t threshold = 10;
 
-const struct v2 barn = { 100, 100 };
+const struct v2 barn = { 150, 100 };
 const struct v2 troughs[] = {
 	{ 150, 875 },
 	{ 1300, 1300 },
 	{ 1300, 375 },
 };
 const int n_troughs = sizeof(troughs) / sizeof(troughs[0]);
+const float overshoot[] = {
+	0.0,
+	0.0,
+	0.0,
+};
+const float home_distance[] = {
+	150,
+	220,
+	150,
+};
 
 static void trough_camera_cb(struct camera_buffer *buf, void *p)
 {
@@ -74,38 +84,6 @@ static void request_frame(struct trough_task *task)
 	platform_camera_capture(task->platform, task->buf, trough_camera_cb, task);
 }
 
-static void trough_set_east(struct trough_task *task, struct platform_status_report *status)
-{
-	struct platform *platform = task->platform;
-	task->east = status->heading / 16.0;
-	platform_heading_controller_set_enabled(platform, true);
-	task->state = TROUGH_POINT;
-
-	log_printf(&util_logger, "east: %3.2f", task->east);
-}
-
-static void trough_point(struct trough_task *task, struct platform_status_report *status)
-{
-	const int extra_amount = 0;
-	struct platform *platform = task->platform;
-	float dx = troughs[task->trough_idx].x - barn.x;
-	float dy = troughs[task->trough_idx].y - barn.y;
-
-	float delta = (atan2f(dy, dx) * 180 / 3.14159);
-	float target_heading = task->east - delta;
-	float diff = target_heading - (status->heading / 16.0);
-	float extra = copysignf(extra_amount, diff);
-
-	log_printf(&util_logger, "dy, dx %f, %f, delta: %3.2f, diff: %3.2f", dy, dx, delta, diff);
-
-	task->heading = target_heading;
-	platform_heading_controller_set_enabled(platform, true);
-	platform_heading_controller_set(platform, 10, task->heading + extra);
-	task->state = TROUGH_WAIT_FOR_POINT;
-
-	log_printf(&util_logger, "heading: %3.2f", task->heading);
-}
-
 static float normalise_angle(float degrees)
 {
 	while (degrees < -180.0) {
@@ -119,11 +97,44 @@ static float normalise_angle(float degrees)
 	return degrees;
 }
 
+static void trough_set_east(struct trough_task *task, struct platform_status_report *status)
+{
+	struct platform *platform = task->platform;
+	task->east = normalise_angle(status->heading / 16.0);
+	platform_heading_controller_set_enabled(platform, true);
+	task->state = TROUGH_POINT;
+
+	log_printf(&util_logger, "east: %3.2f", task->east);
+}
+
+static void trough_point(struct trough_task *task, struct platform_status_report *status)
+{
+	const float extra_amount = overshoot[task->trough_idx];
+	struct platform *platform = task->platform;
+	float dx = troughs[task->trough_idx].x - barn.x;
+	float dy = troughs[task->trough_idx].y - barn.y;
+
+	float delta = (atan2f(dy, dx) * 180 / 3.14159);
+	float target_heading = normalise_angle(task->east - delta);
+	float diff = normalise_angle(target_heading - (status->heading / 16.0));
+	float extra = copysignf(extra_amount, diff);
+
+	log_printf(&util_logger, "dy, dx %f, %f, delta: %3.2f, diff: %3.2f", dy, dx, delta, diff);
+
+	task->return_heading = target_heading;
+	task->heading = target_heading + extra;
+	platform_heading_controller_set_enabled(platform, true);
+	platform_heading_controller_set(platform, 10, task->heading);
+	task->state = TROUGH_WAIT_FOR_POINT;
+
+	log_printf(&util_logger, "heading: %3.2f", task->heading);
+}
+
 static void trough_wait_for_point(struct trough_task *task, struct platform_status_report *status)
 {
 	const float cone_angle = 5;
 	float diff = normalise_angle((status->heading / 16.0) - task->heading);
-	log_printf(&util_logger, "%3.2f -> %3.2f diff: %3.2f", status->heading, task->heading, diff);
+	log_printf(&util_logger, "%3.2f -> %3.2f diff: %3.2f", status->heading / 16.0, task->heading, diff);
 	if ((diff >= -cone_angle) && (diff <= cone_angle)) {
 		task->state = TROUGH_APPROACH;
 		request_frame(task);
@@ -357,7 +368,7 @@ static void trough_wait_for_grain(struct trough_task *task, struct platform_stat
 #define GRAIN_FLAP_CLOSED 3200
 	absolute_time_t now = get_absolute_time();
 	int64_t diff = absolute_time_diff_us(task->timestamp, now);
-	log_printf(&util_logger, "waiting: %"PRId64, diff);
+	//log_printf(&util_logger, "waiting: %"PRId64, diff);
 	if (diff >= grain_drop_ms * 1000) {
 		log_printf(&util_logger, "close flap!");
 		platform_ioe_set(platform, 2, GRAIN_FLAP_CLOSED);
@@ -369,8 +380,9 @@ static void trough_go_home(struct trough_task *task, struct platform_status_repo
 {
 	struct platform *platform = task->platform;
 
-	platform_heading_controller_set(platform, -30, task->heading);
+	//platform_heading_controller_set(platform, -30, task->return_heading);
 	platform_heading_controller_set_enabled(platform, true);
+	platform_heading_controller_set(platform, -30, task->return_heading);
 	platform_vl53l0x_trigger_single(platform, 1);
 
 	platform_boom_trajectory_controller_adjust_target(platform, (struct v2){ 30, 90 },
@@ -379,12 +391,12 @@ static void trough_go_home(struct trough_task *task, struct platform_status_repo
 
 	task->state = TROUGH_WAIT_FOR_HOME;
 
-	log_printf(&util_logger, "heading: %3.2f", task->heading);
+	log_printf(&util_logger, "return heading: %3.2f", task->return_heading);
 }
 
 static void trough_wait_for_home(struct trough_task *task, struct platform_status_report *status)
 {
-	const int target_distance = 230;
+	const int target_distance = home_distance[task->trough_idx];
 	struct platform *platform = task->platform;
 
 	if (status->rear_laser.timestamp <= task->timestamp) {
@@ -421,7 +433,7 @@ static void trough_wait_at_home(struct trough_task *task, struct platform_status
 
 	absolute_time_t now = get_absolute_time();
 	int64_t diff = absolute_time_diff_us(task->timestamp, now);
-	log_printf(&util_logger, "waiting: %"PRId64, diff);
+	//log_printf(&util_logger, "waiting: %"PRId64, diff);
 	if (diff >= wait_time_ms * 1000) {
 		log_printf(&util_logger, "let's go!");
 		task->state = TROUGH_POINT;

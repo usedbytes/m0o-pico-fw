@@ -378,6 +378,7 @@ int main()
 			// Wait for any pending platform update
 			while (!status_report.complete);
 
+			/*
 			if (status_report.rear_laser.timestamp != last_range) {
 				log_printf(&util_logger, "Range: %"PRIu64" (%d) %d mm",
 						to_us_since_boot(status_report.rear_laser.timestamp),
@@ -385,6 +386,7 @@ int main()
 						status_report.rear_laser.range_mm);
 				last_range = status_report.rear_laser.timestamp;
 			}
+			*/
 
 			if (current && current->tick) {
 				current->tick(current, platform, &status_report);
