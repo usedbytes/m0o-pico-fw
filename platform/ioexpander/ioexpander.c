@@ -348,7 +348,7 @@ const struct ioe_hw_pin hw_pins[] = {
 		.pwm_chan = 1,
 		.pwm_reg = IOE_REG_PIOCON0,
 	},
-	[6] = {
+	[7] = {
 		.port = 0,
 		.pin = 3,
 		.has_pwm = 1,
@@ -356,15 +356,6 @@ const struct ioe_hw_pin hw_pins[] = {
 		.adc_chan = 6,
 		.pwm_chan = 5,
 		.pwm_reg = IOE_REG_PIOCON0,
-	},
-	[7] = {
-		.port = 0,
-		.pin = 4,
-		.has_pwm = 1,
-		.has_adc = 1,
-		.adc_chan = 5,
-		.pwm_chan = 3,
-		.pwm_reg = IOE_REG_PIOCON1,
 	},
 	[8] = {
 		.port = 0,
