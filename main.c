@@ -170,8 +170,23 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 	platform_set_pid_coeffs(platform, ev->id, ev->kp, ev->ki, ev->kd);
 }
 
-static void rc_task_handle_input(struct planner_task *task, struct platform *platform, struct input_state *input)
+static void rc_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status);
+static void rc_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input);
+
+struct rc_task {
+	struct planner_task base;
+	bool show_status;
+	absolute_time_t timestamp;
+} rc_task = {
+	.base = {
+		.handle_input = rc_task_handle_input,
+		.tick = rc_task_tick,
+	},
+};
+
+static void rc_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
 {
+	struct rc_task *task = (struct rc_task *)ptask;
 	static uint16_t flap_servo = 5000;
 	if ((input->hat.held == 0) && input->hat.released) {
 		platform_boom_trajectory_controller_set_enabled(platform, false);
@@ -235,6 +250,8 @@ static void rc_task_handle_input(struct planner_task *task, struct platform *pla
 
 	if (input->buttons.pressed & BTN_R2) {
 		log_printf(&util_logger, "request lasers");
+		task->show_status = true;
+		task->timestamp = get_absolute_time();
 		platform_vl53l0x_trigger_single(platform, 0);
 		platform_vl53l0x_trigger_single(platform, 1);
 	}
@@ -257,19 +274,38 @@ static void rc_task_handle_input(struct planner_task *task, struct platform *pla
 	platform_set_velocity(platform, linear, rot);
 }
 
-void rc_task_tick(struct planner_task *task, struct platform *platform, struct platform_status_report *status)
+static void rc_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status)
 {
-#if 0
-	log_printf(&util_logger, "Status: %x, heading: %3.2f, boom: %3.2f,%3.2f",
-			status->status, status->heading / 16.0,
-			status->boom_pos.x, status->boom_pos.y);
-#endif
-}
+	struct rc_task *task = (struct rc_task *)ptask;
+	bool update_timestamp = false;
 
-struct planner_task rc_task = {
-	.handle_input = rc_task_handle_input,
-	.tick = rc_task_tick,
-};
+	if (task->show_status) {
+		log_printf(&util_logger, "Status: %x, heading: %3.2f, boom: %3.2f,%3.2f",
+				status->status, status->heading / 16.0,
+				status->boom_pos.x, status->boom_pos.y);
+		task->show_status = false;
+	}
+
+	if (to_us_since_boot(status->front_laser.timestamp) >= to_us_since_boot(task->timestamp)) {
+		log_printf(&util_logger, "Front range: %"PRIu64" (%d) %d mm",
+				to_us_since_boot(status->front_laser.timestamp),
+				status->front_laser.range_status,
+				status->front_laser.range_mm);
+		update_timestamp = true;
+	}
+
+	if (to_us_since_boot(status->rear_laser.timestamp) >= to_us_since_boot(task->timestamp)) {
+		log_printf(&util_logger, "Rear range: %"PRIu64" (%d) %d mm",
+				to_us_since_boot(status->rear_laser.timestamp),
+				status->rear_laser.range_status,
+				status->rear_laser.range_mm);
+		update_timestamp = true;
+	}
+
+	if (update_timestamp) {
+		task->timestamp = get_absolute_time();
+	}
+}
 
 int main()
 {
@@ -297,7 +333,7 @@ int main()
 
 	struct control_event ev;
 	struct input_state *input;
-	struct planner_task *current = &rc_task;
+	struct planner_task *current = &rc_task.base;
 
 	struct planner_task *apples_task = apples_get_task();
 	struct planner_task *trough_task = trough_get_task(platform);
@@ -309,8 +345,6 @@ int main()
 	struct platform_status_report status_report = { 0 };
 
 	add_alarm_at(next_time, __timer_dummy_event_cb, NULL, false);
-
-	absolute_time_t last_range = nil_time;
 
 	while (1) {
 		control_event_get_blocking(&ev);
@@ -343,7 +377,7 @@ int main()
 					if (ret) {
 						log_printf(&util_logger, "failed to send all stop!");
 					}
-					current = &rc_task;
+					current = &rc_task.base;
 				}
 
 				if (input->buttons.pressed & BTN_SELECT) {
@@ -377,16 +411,6 @@ int main()
 		if (run_tick) {
 			// Wait for any pending platform update
 			while (!status_report.complete);
-
-			/*
-			if (status_report.rear_laser.timestamp != last_range) {
-				log_printf(&util_logger, "Range: %"PRIu64" (%d) %d mm",
-						to_us_since_boot(status_report.rear_laser.timestamp),
-						status_report.rear_laser.range_status,
-						status_report.rear_laser.range_mm);
-				last_range = status_report.rear_laser.timestamp;
-			}
-			*/
 
 			if (current && current->tick) {
 				current->tick(current, platform, &status_report);
