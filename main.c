@@ -280,9 +280,10 @@ static void rc_task_tick(struct planner_task *ptask, struct platform *platform, 
 	bool update_timestamp = false;
 
 	if (task->show_status) {
-		log_printf(&util_logger, "Status: %x, heading: %3.2f, boom: %3.2f,%3.2f",
+		log_printf(&util_logger, "Status: %x, heading: %3.2f, boom: %3.2f,%3.2f, adc: %u",
 				status->status, status->heading / 16.0,
-				status->boom_pos.x, status->boom_pos.y);
+				status->boom_pos.x, status->boom_pos.y,
+				status->adc);
 		task->show_status = false;
 	}
 

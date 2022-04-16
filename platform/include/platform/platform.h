@@ -248,6 +248,7 @@ struct platform_status_report {
 	uint32_t status;
 	int16_t heading;
 	struct v2 boom_pos;
+	uint16_t adc;
 
 	struct {
 		absolute_time_t timestamp;

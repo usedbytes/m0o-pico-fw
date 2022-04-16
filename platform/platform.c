@@ -347,6 +347,7 @@ int platform_init(struct platform *platform /*, platform_config*/)
 		ret |= ioe_set_pwm_divider(&platform->ioe, IOE_PWM_DIVIDER_8);
 		ret |= ioe_set_pin_mode(&platform->ioe, 1, IOE_PIN_MODE_PWM);
 		ret |= ioe_set_pin_mode(&platform->ioe, 2, IOE_PIN_MODE_PWM);
+		ret |= ioe_set_pin_mode(&platform->ioe, 7, IOE_PIN_MODE_ADC);
 		if (ret) {
 			platform->status &= ~PLATFORM_STATUS_IOE_OK;
 		}
@@ -1003,6 +1004,12 @@ static void __platform_get_status(struct platform *platform, struct platform_sta
 
 	__platform_boom_update_position(platform);
 	dst->boom_pos = platform->boom_current;
+
+	ret = ioe_adc_sample(&platform->ioe, 7, &dst->adc);
+	if (ret) {
+		platform->status &= ~(PLATFORM_STATUS_IOE_OK);
+		log_printf(&util_logger, "platform read ADC failed: %d", ret);
+	}
 
 	if (platform->front_laser) {
 		platform_vl53l0x_get_status(platform->front_laser, &dst->front_laser.timestamp,
