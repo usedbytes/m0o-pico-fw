@@ -43,6 +43,8 @@ int ioe_set_pwm_divider(struct ioexpander *ioe, enum ioe_pwm_divider divider);
 
 int ioe_set_pwm_duty(struct ioexpander *ioe, unsigned int pin, uint16_t duty);
 
+int ioe_adc_sample(struct ioexpander *ioe, unsigned int pin, uint16_t *out);
+
 enum ioe_pin_mode {
     IOE_PIN_MODE_IN         = 0x02,
     IOE_PIN_MODE_IN_PULL_UP = 0x10,

@@ -431,6 +431,119 @@ int ioe_set_pwm_duty(struct ioexpander *ioe, unsigned int pin, uint16_t duty)
 	return ioe_pwm_load(ioe, true);
 }
 
+int ioe_adc_sample(struct ioexpander *ioe, unsigned int pin, uint16_t *out)
+{
+	uint8_t tmp;
+
+	if (pin >= sizeof(hw_pins) / sizeof(hw_pins[0])) {
+		return -1;
+	}
+
+	const struct ioe_hw_pin *hw_pin = &hw_pins[pin - 1];
+	if (!hw_pin->has_adc) {
+		return -2;
+	}
+
+	// Enable ADC
+	int ret = read_regs(ioe, IOE_REG_ADCCON1, &tmp, 1);
+	if (ret != 0) {
+		return -1;
+	}
+
+	tmp |= (1 << 0);
+
+	ret = write_reg(ioe, IOE_REG_ADCCON1, tmp);
+	if (ret != 0) {
+		return -1;
+	}
+
+	// Select channel
+	ret = read_regs(ioe, IOE_REG_ADCCON0, &tmp, 1);
+	if (ret != 0) {
+		return -1;
+	}
+
+	tmp &= ~0xf;
+	tmp |= hw_pin->adc_chan;
+
+	ret = write_reg(ioe, IOE_REG_ADCCON0, tmp);
+	if (ret != 0) {
+		return -1;
+	}
+
+	// Disable digital input
+	ret = write_reg(ioe, IOE_REG_AINDIDS, (1 << hw_pin->adc_chan));
+	if (ret != 0) {
+		return -1;
+	}
+
+	// Clear conversion complete
+	ret = read_regs(ioe, IOE_REG_ADCCON0, &tmp, 1);
+	if (ret != 0) {
+		return -1;
+	}
+
+	tmp &= ~(1 << 7);
+
+	ret = write_reg(ioe, IOE_REG_ADCCON0, tmp);
+	if (ret != 0) {
+		return -1;
+	}
+
+	// Start conversion
+	ret = read_regs(ioe, IOE_REG_ADCCON0, &tmp, 1);
+	if (ret != 0) {
+		return -1;
+	}
+
+	tmp |= (1 << 6);
+
+	ret = write_reg(ioe, IOE_REG_ADCCON0, tmp);
+	if (ret != 0) {
+		return -1;
+	}
+
+	// Min sample rate is meant to be 200 ksps, so 50 us should be plenty
+	// (i2c bus is probably the limiting factor here)
+	// I'm not sure why the pimoroni code allows 10s of milliseconds
+	int max_tries = 10;
+	while (max_tries--) {
+		// Check conversion complete
+		int ret = read_regs(ioe, IOE_REG_ADCCON0, &tmp, 1);
+		if (ret != 0) {
+			return -1;
+		}
+
+		if ((tmp & (1 << 7))) {
+			break;
+		}
+
+		sleep_us(5);
+	}
+
+	if (max_tries <= 0) {
+		return 2;
+	}
+
+	// Read the result.
+	// Note that ADCRH is 8 bits and ADCRL is 4 bits
+	ret = read_regs(ioe, IOE_REG_ADCRH, &tmp, 1);
+	if (ret != 0) {
+		return -1;
+	}
+
+	*out = (tmp << 4);
+
+	ret = read_regs(ioe, IOE_REG_ADCRL, &tmp, 1);
+	if (ret != 0) {
+		return -1;
+	}
+
+	*out |= (tmp & 0xf);
+
+	return 0;
+}
+
 static int ioe_hw_pin_cfg_pwm(struct ioexpander *ioe, const struct ioe_hw_pin *hw_pin, bool enable_pwm)
 {
 	// Set PWM channel and start it running
