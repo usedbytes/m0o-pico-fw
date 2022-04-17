@@ -10,7 +10,7 @@
 #include "platform/platform.h"
 
 struct planner_task {
-	void (*on_start)(struct planner_task *task);
+	void (*on_start)(struct planner_task *task, struct platform *platform);
 	void (*handle_input)(struct planner_task *task, struct platform *platform, struct input_state *input);
 	void (*tick)(struct planner_task *task, struct platform *platform, struct platform_status_report *status);
 };

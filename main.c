@@ -360,7 +360,7 @@ struct planner_task *switch_task(struct platform *platform, struct planner_task 
 	}
 
 	if (to && to->on_start) {
-		to->on_start(to);
+		to->on_start(to, platform);
 	}
 
 	return to;

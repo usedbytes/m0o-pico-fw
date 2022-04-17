@@ -89,7 +89,7 @@ static void apple_task_tick(struct planner_task *ptask, struct platform *platfor
 	}
 }
 
-static void apple_task_on_start(struct planner_task *ptask)
+static void apple_task_on_start(struct planner_task *ptask, struct platform *platform)
 {
 	struct apple_task *task = (struct apple_task *)ptask;
 	task->pick_state = PICK_STATE_START;

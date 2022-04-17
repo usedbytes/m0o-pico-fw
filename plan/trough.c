@@ -506,7 +506,7 @@ static void trough_task_handle_input(struct planner_task *ptask, struct platform
 	}
 }
 
-static void trough_task_on_start(struct planner_task *ptask)
+static void trough_task_on_start(struct planner_task *ptask, struct platform *platform)
 {
 	struct trough_task *task = (struct trough_task *)ptask;
 
