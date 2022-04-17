@@ -308,6 +308,64 @@ static void rc_task_tick(struct planner_task *ptask, struct platform *platform, 
 	}
 }
 
+const char *handle_system_input(struct platform *platform, struct input_state *input)
+{
+	if (!(input->buttons.held & BTN_START)) {
+		return NULL;
+	}
+
+	if (input->buttons.pressed & BTN_TRIANGLE) {
+		platform_boom_home(platform);
+	}
+
+	if (input->buttons.pressed & BTN_SQUARE) {
+		platform_servo_level(platform, true);
+	}
+
+	if (input->hat.pressed & HAT_UP) {
+		return "trough";
+	}
+
+	if (input->hat.pressed & HAT_DOWN) {
+		return "apples";
+	}
+
+	return NULL;
+}
+
+struct task_list_entry {
+	const char *name;
+	struct planner_task *task;
+};
+
+struct planner_task *find_task(struct task_list_entry *tasks, int n_tasks, const char *name)
+{
+	int i;
+	for (i = 0; i < n_tasks; i++) {
+		if (!strcmp(name, tasks[i].name)) {
+			return tasks[i].task;
+		}
+	}
+
+	return NULL;
+}
+
+struct planner_task *switch_task(struct platform *platform, struct planner_task *from, struct planner_task *to)
+{
+	// from->on_stop();
+
+	int ret = platform_all_stop(platform);
+	if (ret) {
+		log_printf(&util_logger, "failed to send all stop!");
+	}
+
+	if (to && to->on_start) {
+		to->on_start(to);
+	}
+
+	return to;
+}
+
 int main()
 {
 	struct platform *platform;
@@ -336,8 +394,17 @@ int main()
 	struct input_state *input;
 	struct planner_task *current = &rc_task.base;
 
-	struct planner_task *apples_task = apples_get_task();
-	struct planner_task *trough_task = trough_get_task(platform);
+	struct task_list_entry task_list[] = {
+		{
+			"apples",
+			apples_get_task(),
+		},
+		{
+			"trough",
+			trough_get_task(platform),
+		},
+	};
+	const int n_tasks = sizeof(task_list) / sizeof(task_list[0]);
 
 	const uint32_t update_us = 20000;
 	absolute_time_t now = get_absolute_time();
@@ -373,33 +440,27 @@ int main()
 				input = (struct input_state *)&ev.body_pad;
 				input_state_print(input);
 
+				// All input handling is mutually exclusive, in priority order:
+
 				if (input->buttons.pressed & BTN_CIRCLE) {
-					int ret = platform_all_stop(platform);
-					if (ret) {
-						log_printf(&util_logger, "failed to send all stop!");
+					// Circle "stop" always has highest priority
+					current = switch_task(platform, current, &rc_task.base);
+				} else if (input->buttons.pressed & BTN_SELECT) {
+					// Then reboot
+					util_reboot(false);
+				} else if (input->buttons.held & BTN_START) {
+					// Then swallow "system" commands
+					const char *new_name = handle_system_input(platform, input);
+					if (new_name != NULL) {
+						struct planner_task *new_task = find_task(task_list, n_tasks, new_name);
+						if (new_task) {
+							log_printf(&util_logger, "switch to %s -> %p", new_name, new_task);
+							current = switch_task(platform, current, new_task);
+						}
 					}
-					current = &rc_task.base;
-				}
-
-				if (input->buttons.pressed & BTN_SELECT) {
-					util_reboot(input->buttons.held & BTN_START);
-				}
-
-				if (current && current->handle_input) {
+				} else if (current && current->handle_input) {
+					// If nothing else, feed it on to the task
 					current->handle_input(current, platform, input);
-				}
-
-				if (input->buttons.released & BTN_HEART) {
-					/*
-					current = apples_task;
-					if (current && current->on_start) {
-						current->on_start(current);
-					}
-					*/
-					current = trough_task;
-					if (current && current->on_start) {
-						current->on_start(current);
-					}
 				}
 
 				break;
