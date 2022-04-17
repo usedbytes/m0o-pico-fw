@@ -18,6 +18,8 @@
 #include "camera/format.h"
 #include "platform/platform.h"
 
+#include "trough.h"
+
 enum trough_state {
 	TROUGH_SET_EAST,
 	TROUGH_POINT,

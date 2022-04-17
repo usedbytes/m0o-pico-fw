@@ -6,6 +6,6 @@
 #ifndef __TROUGH_H__
 #define __TROUGH_H__
 
-struct planner_task *trough_get_task();
+struct planner_task *trough_get_task(struct platform *platform);
 
 #endif /* __TROUGH_H__ */
