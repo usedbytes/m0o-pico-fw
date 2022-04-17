@@ -196,6 +196,8 @@ static void rc_task_handle_input(struct planner_task *ptask, struct platform *pl
 		platform_boom_set_raw(platform, 0, 0);
 	}
 
+	float speed_scale = 1.0;
+
 	if (input->hat.pressed) {
 		if (input->buttons.held & (1 << BTN_BIT_L1)) {
 			int8_t lift = 0;
@@ -248,7 +250,7 @@ static void rc_task_handle_input(struct planner_task *ptask, struct platform *pl
 		}
 	}
 
-	if (input->buttons.pressed & BTN_R2) {
+	if (input->buttons.pressed & BTN_CROSS) {
 		log_printf(&util_logger, "request lasers");
 		task->show_status = true;
 		task->timestamp = get_absolute_time();
@@ -256,20 +258,11 @@ static void rc_task_handle_input(struct planner_task *ptask, struct platform *pl
 		platform_vl53l0x_trigger_single(platform, 1);
 	}
 
-	if (input->buttons.pressed & BTN_L2) {
-		platform_heading_controller_set_enabled(platform, true);
-		platform_heading_controller_set(platform, 10, 10);
+	if (input->buttons.held & BTN_R2) {
+		speed_scale = 0.2;
 	}
 
-	if (input->buttons.pressed & BTN_SQUARE) {
-		platform_servo_level(platform, true);
-	}
-
-	if ((input->buttons.pressed & BTN_TRIANGLE) && input->buttons.held & (1 << BTN_BIT_START)) {
-		platform_boom_home(platform);
-	}
-
-	int8_t linear = clamp8(-(input->axes.ly - 128));
+	int8_t linear = clamp8(-(input->axes.ly - 128) * speed_scale);
 	int8_t rot = clamp8(-(input->axes.rx - 128));
 	platform_set_velocity(platform, linear, rot);
 }
