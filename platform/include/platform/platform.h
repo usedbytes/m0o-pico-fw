@@ -58,6 +58,7 @@ struct platform_message {
 #define PLATFORM_MESSAGE_LASER_TRIGGER    21
 #define PLATFORM_MESSAGE_HEADING_SET      22
 #define PLATFORM_MESSAGE_HEADING_SET_ENABLED      23
+#define PLATFORM_MESSAGE_IOE_PWM_SET_ENABLED      24
 	uint8_t type;
 	uint8_t pad[3];
 	union {
@@ -87,7 +88,7 @@ struct platform_message {
 		} boom_extend_enable;
 		struct {
 			uint8_t pin;
-			uint8_t pad;
+			uint8_t enabled;
 			uint16_t val;
 		} ioe_set;
 		struct {
@@ -229,6 +230,7 @@ int platform_run_function(struct platform *platform, scheduled_func_t func, void
 
 int platform_boom_set_raw(struct platform *platform, int8_t lift, int8_t extend);
 
+int platform_ioe_pwm_set_enabled(struct platform *platform, uint8_t pin, bool enabled);
 int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val);
 
 int platform_servo_level(struct platform *platform, bool enabled);

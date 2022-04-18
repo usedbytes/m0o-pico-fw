@@ -947,6 +947,28 @@ int platform_servo_level(struct platform *platform, bool enabled)
 	return platform_send_message(platform, &msg);
 }
 
+int platform_ioe_pwm_set_enabled(struct platform *platform, uint8_t pin, bool enabled)
+{
+	struct platform_message msg = {
+		.type = PLATFORM_MESSAGE_IOE_PWM_SET_ENABLED,
+		.ioe_set = {
+			.pin = pin,
+			.enabled = enabled,
+		},
+	};
+
+	return platform_send_message(platform, &msg);
+}
+
+static void __platform_ioe_pwm_set_enabled(struct platform *platform, uint8_t pin, bool enabled)
+{
+	if (enabled) {
+		ioe_set_pin_mode(&platform->ioe, pin, IOE_PIN_MODE_PWM);
+	} else {
+		ioe_set_pin_mode(&platform->ioe, pin, IOE_PIN_MODE_OD);
+	}
+}
+
 int platform_ioe_set(struct platform *platform, uint8_t pin, uint16_t val)
 {
 	struct platform_message msg = {
@@ -1323,6 +1345,9 @@ void platform_run(struct platform *platform) {
 				break;
 			case PLATFORM_MESSAGE_HEADING_SET_ENABLED:
 				__platform_heading_controller_set_enabled(platform, msg.set_enabled.enabled);
+				break;
+			case PLATFORM_MESSAGE_IOE_PWM_SET_ENABLED:
+				__platform_ioe_pwm_set_enabled(platform, msg.ioe_set.pin, msg.ioe_set.enabled);
 				break;
 			}
 		} while (queue_try_remove(&platform->queue, &msg));
