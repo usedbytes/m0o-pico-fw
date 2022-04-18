@@ -171,6 +171,7 @@ static void handle_pid_event(struct platform *platform, struct control_event *ce
 	platform_set_pid_coeffs(platform, ev->id, ev->kp, ev->ki, ev->kd);
 }
 
+static void rc_task_on_start(struct planner_task *ptask, struct platform *platform);
 static void rc_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status);
 static void rc_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input);
 
@@ -180,10 +181,18 @@ struct rc_task {
 	absolute_time_t timestamp;
 } rc_task = {
 	.base = {
+		.on_start = rc_task_on_start,
 		.handle_input = rc_task_handle_input,
 		.tick = rc_task_tick,
 	},
 };
+
+static void rc_task_on_start(struct planner_task *ptask, struct platform *platform)
+{
+	platform_boom_trajectory_controller_adjust_target(platform,
+			(struct v2){ 0, 0 },
+			TRAJECTORY_ADJUST_SET_BOTH_TO_CURRENT);
+}
 
 static void rc_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
 {
@@ -407,7 +416,7 @@ int main()
 
 	struct control_event ev;
 	struct input_state *input;
-	struct planner_task *current = &rc_task.base;
+	struct planner_task *current = switch_task(platform, NULL, &rc_task.base);
 
 	struct task_list_entry task_list[] = {
 		{

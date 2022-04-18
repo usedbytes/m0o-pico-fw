@@ -162,10 +162,15 @@ int boom_extend_set(int8_t val)
 	return 0;
 }
 
-void boom_reset_count()
+void boom_reset_count_to(int16_t val)
 {
 	boom_update_count();
-	boom.extend.count = 0;
+	boom.extend.count = val;
+}
+
+void boom_reset_count()
+{
+	boom_reset_count_to(0);
 }
 
 int16_t boom_update_count()
@@ -254,6 +259,16 @@ int boom_lift_reset_angle()
 	boom.lift.zero_angle = raw_angle;
 
 	return 0;
+}
+
+void boom_lift_set_zero_angle(uint16_t val)
+{
+	boom.lift.zero_angle = val;
+}
+
+uint16_t boom_lift_get_zero_angle(void)
+{
+	return boom.lift.zero_angle;
 }
 
 // Returns:

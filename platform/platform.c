@@ -11,6 +11,9 @@
 #include "pico/float.h"
 #include "pico/sync.h"
 
+#include "hardware/watchdog.h"
+#include "hardware/structs/watchdog.h"
+
 #include "log.h"
 #include "util.h"
 
@@ -37,6 +40,8 @@
 #define MAX_TRAJECTORY_STEP 10
 
 #define HEADING_CONTROLLER_TICK 30000
+
+#define PLATFORM_WD_BOOM_HOME_MAGIC 0xb00f40f3
 
 #define BNO055_ADDR 0x28
 
@@ -284,6 +289,12 @@ static void __platform_boom_home_run(absolute_time_t scheduled, void *data)
 			}
 			platform->boom_home_state = BOOM_HOME_DONE;
 			platform->status |= PLATFORM_STATUS_BOOM_HOMED;
+
+			{ // Save homing data
+				watchdog_hw->scratch[0] = PLATFORM_WD_BOOM_HOME_MAGIC;
+				watchdog_hw->scratch[1] = boom_lift_get_zero_angle();
+				watchdog_hw->scratch[2] = 0;
+			}
 		}
 		break;
 	default:
@@ -307,6 +318,8 @@ static inline int __i2c_read_blocking(void *i2c_handle, uint8_t addr, uint8_t *d
 {
 	return i2c_bus_read_blocking((struct i2c_bus *)i2c_handle, addr, dst, len);
 }
+
+static void __platform_boom_update_position(struct platform *platform);
 
 int platform_init(struct platform *platform /*, platform_config*/)
 {
@@ -389,6 +402,18 @@ int platform_init(struct platform *platform /*, platform_config*/)
 	c->out_min = -127;
 	c->out_max = 128;
 	fcontroller_set_tunings(c, 3.5, 0.1, 0.01, HEADING_CONTROLLER_TICK);
+
+	if (watchdog_hw->scratch[0] == PLATFORM_WD_BOOM_HOME_MAGIC) {
+		uint16_t angle = watchdog_hw->scratch[1];
+		int16_t count = watchdog_hw->scratch[2];
+
+		log_printf(&util_logger, "Loaded boom home data: %d, %d", angle, count);
+		boom_lift_set_zero_angle(angle);
+		boom_reset_count_to(count);
+		__platform_boom_update_position(platform);
+
+		platform->status |= PLATFORM_STATUS_BOOM_HOMED;
+	}
 
 	return ret;
 }
@@ -654,6 +679,11 @@ static void __platform_boom_update_position(struct platform *platform)
 	if (ret != 0) {
 		log_printf(&util_logger, "failed to get position");
 		return;
+	}
+
+	// Save homing data
+	if (platform->status & PLATFORM_STATUS_BOOM_HOMED) {
+		watchdog_hw->scratch[2] = count;
 	}
 
 	absolute_time_t now = get_absolute_time();

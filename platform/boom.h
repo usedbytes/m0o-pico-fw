@@ -29,4 +29,9 @@ void boom_reset_count();
 float boom_extend_count_to_mm(int16_t count);
 int16_t boom_extend_mm_to_count(float mm);
 
+// Functions for persisting "home" across warm reboots
+void boom_reset_count_to(int16_t val);
+void boom_lift_set_zero_angle(uint16_t val);
+uint16_t boom_lift_get_zero_angle(void);
+
 #endif /* __BOOM_H__ */
