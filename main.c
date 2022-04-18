@@ -17,6 +17,7 @@
 #include "log.h"
 #include "plan/planner.h"
 #include "plan/apples.h"
+#include "plan/servo.h"
 #include "plan/trough.h"
 #include "platform/platform.h"
 #include "util.h"
@@ -250,6 +251,23 @@ static void rc_task_handle_input(struct planner_task *ptask, struct platform *pl
 		}
 	}
 
+	if (input->buttons.held & BTN_R1) {
+#define APPLE_EJECT 2000
+#define APPLE_PICK  3750
+#define APPLE_APPROACH 7500
+		if (input->buttons.pressed & BTN_CROSS) {
+			platform_ioe_set(platform, 2, APPLE_APPROACH);
+		}
+
+		if (input->buttons.pressed & BTN_SQUARE) {
+			platform_ioe_set(platform, 2, APPLE_PICK);
+		}
+
+		if (input->buttons.pressed & BTN_TRIANGLE) {
+			platform_ioe_set(platform, 2, APPLE_EJECT);
+		}
+	}
+
 	if (input->buttons.pressed & BTN_CROSS) {
 		log_printf(&util_logger, "request lasers");
 		task->show_status = true;
@@ -321,6 +339,10 @@ const char *handle_system_input(struct platform *platform, struct input_state *i
 
 	if (input->hat.pressed & HAT_DOWN) {
 		return "apples";
+	}
+
+	if (input->hat.pressed & HAT_LEFT) {
+		return "servo";
 	}
 
 	return NULL;
@@ -395,6 +417,10 @@ int main()
 		{
 			"trough",
 			trough_get_task(platform),
+		},
+		{
+			"servo",
+			servo_get_task(),
 		},
 	};
 	const int n_tasks = sizeof(task_list) / sizeof(task_list[0]);
