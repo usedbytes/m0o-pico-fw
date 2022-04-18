@@ -478,7 +478,7 @@ static void platform_boom_lift_controller_run(absolute_time_t scheduled, void *d
 	int8_t set = clamp8(output);
 	boom_lift_set(set);
 
-	//log_printf(&util_logger, "lift_controller: in: %d, set: %d, out: %d", current, (int)c->setpoint, set);
+	//log_printf(&util_logger, "lift_controller: in: %d, set: %d, out: %3.2f %d", current, (int)c->setpoint, output, set);
 
 	platform_schedule_function(platform, platform_boom_lift_controller_run, platform, scheduled + BOOM_LIFT_CONTROLLER_TICK);
 }
@@ -871,7 +871,14 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 	float rad_step = q_dot.x;
 	float mm_step = q_dot.y;
 
-	//log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
+	log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
+
+	// HAX: Awful fudge to try and make vertical position track better
+	// in manual moves. Basically reduce the lift movement when the
+	// movement is small.
+	if (fabsf(rad_step) < 0.01) {
+		rad_step *= 0.2;
+	}
 
 	int16_t new_angle = boom_lift_radians_to_angle(radians + rad_step);
 	int16_t new_count = boom_extend_mm_to_count(mm + mm_step);
