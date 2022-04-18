@@ -903,12 +903,14 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 
 	log_printf(&util_logger, "rad_step: %3.5f, mm_step: %3.2f", rad_step, mm_step);
 
+	/*
 	// HAX: Awful fudge to try and make vertical position track better
 	// in manual moves. Basically reduce the lift movement when the
 	// movement is small.
 	if (fabsf(rad_step) < 0.01) {
 		rad_step *= 0.2;
 	}
+	*/
 
 	int16_t new_angle = boom_lift_radians_to_angle(radians + rad_step);
 	int16_t new_count = boom_extend_mm_to_count(mm + mm_step);
