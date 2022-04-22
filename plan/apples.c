@@ -59,9 +59,8 @@ const struct v2 drop_boom_targets[] = {
 
 const int reach_distances[] = {
 	20,
-	10,
+	5,
 };
-
 
 static void apple_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
 {
@@ -95,7 +94,7 @@ static void apple_boom_approach(struct apple_task *task, struct platform *platfo
 
 static void apple_boom_approach_wait(struct apple_task *task, struct platform *platform, struct platform_status_report *status)
 {
-	const int8_t speed = 3;
+	const int8_t speed = 6;
 	if (!(status->status & PLATFORM_STATUS_BOOM_TARGET_REACHED)) {
 		log_printf(&util_logger, "not reached");
 		return;
@@ -182,7 +181,7 @@ static void apple_pick_close(struct apple_task *task, struct platform *platform,
 static void apple_pick_close_wait(struct apple_task *task, struct platform *platform, struct platform_status_report *status)
 {
 	const int back_up_distance = 70;
-	const int8_t speed = 3;
+	const int8_t speed = 6;
 	const uint32_t wait_time_us = 300000;
 
 	absolute_time_t now = get_absolute_time();
@@ -207,7 +206,7 @@ static void apple_pick_close_wait(struct apple_task *task, struct platform *plat
 static void apple_pick_chassis_back_up(struct apple_task *task, struct platform *platform, struct platform_status_report *status)
 {
 	const int tolerance = 2;
-	const int8_t speed = 3;
+	const int8_t speed = 6;
 
 	if (status->front_laser.timestamp <= task->timestamp) {
 		// Range not measured yet
@@ -221,10 +220,7 @@ static void apple_pick_chassis_back_up(struct apple_task *task, struct platform 
 
 	log_printf(&util_logger, "backup diff: %d", diff);
 
-	if (diff > tolerance) {
-		// Get closer
-		platform_set_velocity(platform, speed, 0);
-	} else if (diff < -tolerance) {
+	if (diff < -tolerance) {
 		platform_set_velocity(platform, -speed, 0);
 	} else {
 		platform_set_velocity(platform, 0, 0);
