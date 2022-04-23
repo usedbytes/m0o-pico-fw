@@ -6,6 +6,8 @@
 #ifndef __TROUGH_H__
 #define __TROUGH_H__
 
-struct planner_task *trough_get_task(struct platform *platform);
+#include "camera/camera.h"
+
+struct planner_task *trough_get_task(struct platform *platform, struct camera_buffer *buf);
 
 #endif /* __TROUGH_H__ */

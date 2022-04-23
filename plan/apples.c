@@ -5,6 +5,8 @@
  */
 #include <inttypes.h>
 
+#include "camera/camera.h"
+#include "camera/format.h"
 #include "log.h"
 #include "planner.h"
 #include "util.h"
@@ -194,12 +196,17 @@ struct chassis_planner {
 	int8_t current_linear_speed;
 
 #define SENSOR_FRONT_RANGE      (1 << 0)
+#define SENSOR_CAMERA           (1 << 1)
 	uint32_t sensors;
 
-	bool front_range_continuous;
+	bool camera_frame_pending;
+	bool camera_frame_done;
+	struct camera_buffer *buf;
+
 	absolute_time_t front_range_ts;
-	bool target_distance_valid;
+	bool front_range_pending;
 	uint16_t target_distance;
+	bool target_distance_valid;
 	int16_t relative_distance;
 	uint16_t set_distance;
 
@@ -246,6 +253,13 @@ struct apple_task {
 	struct picker_planner pp;
 };
 
+static void chassis_camera_cb(struct camera_buffer *buf, void *p)
+{
+	struct chassis_planner *cp = (struct chassis_planner *)p;
+
+	cp->camera_frame_done = true;
+}
+
 static void chassis_tick(struct chassis_planner *cp, struct platform *platform, struct platform_status_report *status)
 {
 	const int distance_tolerance = 2;
@@ -255,24 +269,37 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 
 	// Handle sensor requests
 
-	if (cp->sensors & SENSOR_FRONT_RANGE) {
-		// TODO: Schedule camera
-		if (!cp->front_range_continuous) {
-			log_printf(&util_logger, "starting laser continuous");
-			cp->front_range_continuous = true;
-			cp->front_range_ts = get_absolute_time();
-			platform_vl53l0x_set_continuous(platform, 0, true);
-		}
+	if (status->front_laser.timestamp > cp->front_range_ts) {
+		cp->front_range_ts = status->front_laser.timestamp;
+		cp->front_range_pending = false;
 
-		if (status->front_laser.timestamp >= cp->front_range_ts) {
-			//log_printf(&util_logger, "have range");
-			cp->front_range_ts = status->front_laser.timestamp;
-			have_front_range = true;
-			front_range = status->front_laser.range_mm;
+		have_front_range = true;
+		front_range = status->front_laser.range_mm;
+	}
+
+	if (cp->sensors & SENSOR_FRONT_RANGE) {
+		// Can't request laser while camera is capturing
+		if (!cp->front_range_pending &&
+		   ((!(cp->sensors & SENSOR_CAMERA)) || cp->camera_frame_done)) {
+			cp->front_range_pending = true;
+			cp->front_range_ts = get_absolute_time();
+			platform_vl53l0x_trigger_single(platform, 0);
 		}
-	} else if (cp->front_range_continuous) {
-		cp->front_range_continuous = false;
-		platform_vl53l0x_set_continuous(platform, 0, false);
+	}
+
+	if (cp->camera_frame_done) {
+		// Process
+		cp->camera_frame_pending = false;
+		cp->camera_frame_done = false;
+	}
+
+	if (cp->sensors & SENSOR_CAMERA) {
+		if (!cp->camera_frame_pending && !cp->front_range_pending) {
+			// Request frame
+			cp->camera_frame_pending = true;
+			cp->camera_frame_done = false;
+			platform_camera_capture(platform, cp->buf, chassis_camera_cb, cp);
+		}
 	}
 
 	// Handle state changes
@@ -394,7 +421,7 @@ static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distan
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	cp->sensors = SENSOR_FRONT_RANGE;
+	cp->sensors = SENSOR_FRONT_RANGE;// | SENSOR_CAMERA;
 	cp->active = true;
 }
 
@@ -464,6 +491,8 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	const int fast_speed = 6;
 	bool entering = task->state_entry;
 	task->state_entry = false;
+
+	log_printf(&util_logger, "coord tick: %d", task->coord_state, entering);
 
 	switch (task->coord_state) {
 	case COORD_STATE_PERIMETER_APPROACH:
@@ -887,12 +916,13 @@ static void apple_task_on_start(struct planner_task *ptask, struct platform *pla
 {
 	struct apple_task *task = (struct apple_task *)ptask;
 	task->pick_state = PICK_STATE_IDLE;
+	chassis_stop(&task->cp);
 	coord_set_state(task, COORD_STATE_STOP);
 	task->run_coord = false;
 	platform_servo_level(platform, true);
 }
 
-struct planner_task *apples_get_task()
+struct planner_task *apples_get_task(struct camera_buffer *buf)
 {
 	static struct apple_task task = {
 		.base = {
@@ -903,6 +933,8 @@ struct planner_task *apples_get_task()
 		.pick_state = PICK_STATE_IDLE,
 		.apple_idx = 0,
 	};
+
+	task.cp.buf = buf;
 
 	return &task.base;
 }

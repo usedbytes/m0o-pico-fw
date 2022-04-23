@@ -5,7 +5,8 @@
  */
 #ifndef __APPLES_H__
 #define __APPLES_H__
+#include "camera/camera.h"
 
-struct planner_task *apples_get_task();
+struct planner_task *apples_get_task(struct camera_buffer *buf);
 
 #endif /* __APPLES_H__ */

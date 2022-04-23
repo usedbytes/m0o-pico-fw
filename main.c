@@ -11,6 +11,8 @@
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
 
+#include "camera/camera.h"
+#include "camera/format.h"
 #include "comm.h"
 #include "host.h"
 #include "input.h"
@@ -419,14 +421,16 @@ int main()
 	struct input_state *input;
 	struct planner_task *current = switch_task(platform, NULL, &rc_task.base);
 
+	struct camera_buffer *buf = camera_buffer_alloc(FORMAT_YUV422, 80, 60);
+
 	struct task_list_entry task_list[] = {
 		{
 			"apples",
-			apples_get_task(),
+			apples_get_task(buf),
 		},
 		{
 			"trough",
-			trough_get_task(platform),
+			trough_get_task(platform, buf),
 		},
 		{
 			"servo",

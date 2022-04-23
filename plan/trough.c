@@ -516,7 +516,7 @@ static void trough_task_on_start(struct planner_task *ptask, struct platform *pl
 	request_frame(task);
 }
 
-struct planner_task *trough_get_task(struct platform *platform)
+struct planner_task *trough_get_task(struct platform *platform, struct camera_buffer *buf)
 {
 	static struct trough_task task = {
 		.base = {
@@ -527,11 +527,7 @@ struct planner_task *trough_get_task(struct platform *platform)
 	};
 
 	task.platform = platform;
-	task.buf = camera_buffer_alloc(FORMAT_YUV422, 80, 60);
-	if (!task.buf) {
-		log_printf(&util_logger, "buffer alloc failed");
-		return NULL;
-	}
+	task.buf = buf;
 
 	return &task.base;
 }
