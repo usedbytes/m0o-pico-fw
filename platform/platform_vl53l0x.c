@@ -163,7 +163,7 @@ void __platform_vl53l0x_set_continuous(struct platform_vl53l0x *sens, bool enabl
 
 		sens->state = LASER_CONTINUOUS_START;
 		platform_schedule_function(sens->platform, platform_vl53l0x_run, sens, get_absolute_time());
-	} else {
+	} else if ((sens->state == LASER_CONTINUOUS_START) || (sens->state == LASER_CONTINUOUS_PENDING)) {
 		sens->state = LASER_STOPPED;
 	}
 }
