@@ -377,7 +377,7 @@ static void chassis_set_distance_lte(struct chassis_planner *cp, uint16_t distan
 	cp->end_conditions = END_COND_DISTANCE_LTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
-	cp->front_range_ts = get_absolute_time();
+	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
@@ -390,7 +390,7 @@ static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distan
 	cp->end_conditions = END_COND_DISTANCE_GTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
-	cp->front_range_ts = get_absolute_time();
+	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
@@ -406,7 +406,7 @@ static void chassis_set_distance_lte_relative(struct chassis_planner *cp, uint16
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	cp->front_range_ts = get_absolute_time();
+	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 }
@@ -419,7 +419,7 @@ static void chassis_set_distance_gte_relative(struct chassis_planner *cp, uint16
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	cp->front_range_ts = get_absolute_time();
+	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 }
