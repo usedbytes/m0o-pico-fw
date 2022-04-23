@@ -63,6 +63,7 @@ enum coordinator_state {
 	COORD_STATE_TREE_POINT,
 	COORD_STATE_TREE_APPROACH,
 	COORD_STATE_BRANCH_APPROACH,
+	COORD_STATE_BRANCH_POSITION,
 	COORD_STATE_APPLE_REACH,
 	COORD_STATE_APPLE_CLOSE,
 	COORD_STATE_BACK_UP,
@@ -155,7 +156,6 @@ struct boom_planner {
 static void boom_tick(struct boom_planner *bp, struct platform *platform, struct platform_status_report *status)
 {
 	if ((bp->requested.x != bp->set.x) || (bp->requested.y != bp->set.y)) {
-		bp->done = false;
 		bp->set = bp->requested;
 		log_printf(&util_logger, "update boom target: (%3.2f, %3.2f)", bp->set.x, bp->set.y);
 		platform_boom_trajectory_controller_adjust_target(platform,
@@ -177,7 +177,9 @@ static bool boom_done(struct boom_planner *bp)
 static void boom_set(struct boom_planner *bp, struct v2 abs_target)
 {
 	bp->requested = abs_target;
-	bp->done = false;
+	if ((abs_target.x != bp->set.x) || (abs_target.y != bp->set.y)) {
+		bp->done = false;
+	}
 }
 
 struct chassis_planner {
@@ -189,11 +191,14 @@ struct chassis_planner {
 	enum {
 		HEADING_CONTROL_FORWARD,
 		HEADING_CONTROL_EXPLICIT,
+		HEADING_CONTROL_RED_BLOB,
 	} heading_control;
 	bool controller_active;
 
 	int8_t linear_speed;
 	int8_t current_linear_speed;
+
+	float current_heading;
 
 #define SENSOR_FRONT_RANGE      (1 << 0)
 #define SENSOR_CAMERA           (1 << 1)
@@ -258,6 +263,127 @@ static void chassis_camera_cb(struct camera_buffer *buf, void *p)
 	struct chassis_planner *cp = (struct chassis_planner *)p;
 
 	cp->camera_frame_done = true;
+	cp->camera_frame_pending = false;
+	log_printf(&util_logger, "camera done");
+}
+
+static const int threshold = 10;
+// Search for the furthest left and furthest right pixels in 'row'
+// which are brighter than 'maxval - threshold', starting at 'start_idx'
+static void search_row(uint8_t *row, int len, int start_idx, uint8_t maxval,
+		       int *left_out, int *right_out)
+{
+	int i;
+
+	int left = start_idx;
+	int right = start_idx;
+
+	// Search to the left
+	for (i = start_idx; i >= 0; i--) {
+		if (maxval - row[i] <= threshold) {
+			left = i;
+		} else {
+			break;
+		}
+	}
+
+	// Search to the right
+	for (i = start_idx + 1; i < len; i++) {
+		if (maxval - row[i] <= threshold) {
+			right = i;
+		} else {
+			break;
+		}
+	}
+
+	*left_out = left;
+	*right_out = right;
+}
+
+// Returns the middle 'X' coordinate of the brightest red blob
+static int find_red_blob(struct camera_buffer *buf, int *left, int *right, int *bottom)
+{
+	uint32_t start = time_us_32();
+	int x, y;
+	uint8_t reddest = 0;
+	int max_x = 0, max_y = 0;
+
+	// First find the reddest pixel in the image.
+	// It's a YCbCr image, we only care about "redness", which is Cr
+	// which is stored in buf->data[2]
+	for (y = 0; y < buf->height; y++) {
+		for (x = 0; x < buf->width / 2; x++) {
+			uint8_t pix = buf->data[2][buf->strides[2] * y + x];
+			if (pix > reddest) {
+				reddest = pix;
+				max_x = x;
+				max_y = y;
+			}
+		}
+	}
+
+	log_printf(&util_logger, "reddest: %d", reddest);
+
+	// Next, we search up and down the rows, looking for ones which are also
+	// part of the blob.
+	// On each row, we find the leftmost and rightmost pixel which is within
+	// some threshold of the reddest value.
+	// Then we take the middle of that left..right range to use as the
+	// starting point for searching the next row.
+
+	// l and r track the absolute leftmost and rightmost extremes of the
+	// blob, eventually giving its widest point.
+	int l = max_x;
+	int r = max_x;
+	int tmp_l, tmp_r;
+
+	// Search up
+	int idx = max_x;
+	for (y = max_y; y >= 0; y--) {
+		uint8_t *row = &buf->data[2][buf->strides[2] * y];
+
+		// Only search this row if the starting point is actually
+		// red enough
+		if (reddest - row[idx] < threshold) {
+			// Note: buf->width / 2, because this is a YUV422 image,
+			// so the Cr plane is half as wide as the image itself
+			search_row(row, buf->width / 2, idx, reddest, &tmp_l, &tmp_r);
+
+			// Update the global leftmost/rightmost values
+			l = tmp_l < l ? tmp_l : l;
+			r = tmp_r > r ? tmp_r : r;
+
+			// Calculate the starting point for the next row
+			idx = tmp_l + ((tmp_r - tmp_l) / 2);
+		} else {
+			break;
+		}
+	}
+
+	// Search down, starting with the middle X coord we've found so far
+	idx = l + ((r - l) / 2);
+	for (y = max_y; y < buf->height; y++) {
+		uint8_t *row = &buf->data[2][buf->strides[2] * y];
+		if (reddest - row[idx] < threshold) {
+			search_row(row, buf->width / 2, idx, reddest, &tmp_l, &tmp_r);
+
+			l = tmp_l < l ? tmp_l : l;
+			r = tmp_r > r ? tmp_r : r;
+		} else {
+			break;
+		}
+	}
+
+
+	// Finally, calculate the overall middle X coord
+	int mid = l + (r - l) / 2;
+	*left = l;
+	*right = r;
+	*bottom = y;
+
+	log_printf(&util_logger, "Process done. %d us, mid %d", time_us_32() - start, mid);
+
+	return mid;
 }
 
 static void chassis_tick(struct chassis_planner *cp, struct platform *platform, struct platform_status_report *status)
@@ -275,34 +401,54 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 
 		have_front_range = true;
 		front_range = status->front_laser.range_mm;
+		log_printf(&util_logger, "laser done %d", front_range);
 	}
 
 	if (cp->sensors & SENSOR_FRONT_RANGE) {
 		// Can't request laser while camera is capturing
+		log_printf(&util_logger, "LASER: %d && (%d || %d)",
+			!cp->front_range_pending,
+			!(cp->sensors & SENSOR_CAMERA),
+			 cp->camera_frame_done);
+
 		if (!cp->front_range_pending &&
 		   ((!(cp->sensors & SENSOR_CAMERA)) || cp->camera_frame_done)) {
 			cp->front_range_pending = true;
 			cp->front_range_ts = get_absolute_time();
 			platform_vl53l0x_trigger_single(platform, 0);
+			log_printf(&util_logger, "laser trigger");
 		}
 	}
 
+	bool have_frame = false;
+	int left = 0, right = 0, bottom;
 	if (cp->camera_frame_done) {
-		// Process
-		cp->camera_frame_pending = false;
 		cp->camera_frame_done = false;
+
+		find_red_blob(cp->buf, &left, &right, &bottom);
+		log_printf(&util_logger, "frame done: %d, %d, %d", left, right, bottom);
+
+		if ((right - left) >= 2) {
+			have_frame = true;
+		}
 	}
 
 	if (cp->sensors & SENSOR_CAMERA) {
+		log_printf(&util_logger, "CAMERA: %d && %d",
+			!cp->camera_frame_pending, !cp->front_range_pending);
 		if (!cp->camera_frame_pending && !cp->front_range_pending) {
 			// Request frame
 			cp->camera_frame_pending = true;
 			cp->camera_frame_done = false;
 			platform_camera_capture(platform, cp->buf, chassis_camera_cb, cp);
+			log_printf(&util_logger, "camera trigger");
 		}
 	}
 
 	// Handle state changes
+
+	log_printf(&util_logger, "have_frame: %d, have_front_range: %d, speed_control: %d, heading_control: %d",
+			have_frame, have_front_range, cp->speed_control, cp->heading_control);
 
 	if (have_front_range && (cp->speed_control == SPEED_CONTROL_DISTANCE_RELATIVE)) {
 		log_printf(&util_logger, "setting relative distance");
@@ -346,6 +492,16 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	case HEADING_CONTROL_EXPLICIT:
 		heading = cp->target_heading;
 		break;
+	case HEADING_CONTROL_RED_BLOB:
+		if (have_frame) {
+			const float deg_per_pixel = 0.835;
+			float diff = (left - 20) * deg_per_pixel;
+			log_printf(&util_logger, "blob diff: %3.2f", diff);
+			heading = normalise_angle(status->heading / 16.0) + diff;
+		} else {
+			heading = cp->current_heading;
+		}
+		break;
 	default:
 		heading = normalise_angle(status->heading / 16.0);
 		break;
@@ -375,27 +531,27 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 		current_conditions |= END_COND_BEAM;
 	}
 
-	//log_printf(&util_logger, "current_conditions: 0x%x, end_conditions: 0x%x", current_conditions, cp->end_conditions);
+	log_printf(&util_logger, "current_conditions: 0x%x, end_conditions: 0x%x", current_conditions, cp->end_conditions);
 
-	bool want_control = true;
 	if ((current_conditions & cp->end_conditions) == cp->end_conditions) {
 		// Stop!
-		want_control = false;
+		log_printf(&util_logger, "end conditions reached");
 		linear_speed = 0;
 		cp->active = false;
 	}
 
 	// Finally, apply speed/heading
 
-	if (cp->controller_active != want_control) {
-		platform_heading_controller_set_enabled(platform, want_control);
-		cp->controller_active = want_control;
+	if (cp->controller_active != cp->active) {
+		platform_heading_controller_set_enabled(platform, cp->active);
+		cp->controller_active = cp->active;
 	}
 
-	if (want_control) {
+	if (cp->active) {
 		platform_heading_controller_set(platform, linear_speed, heading);
 	}
 
+	cp->current_heading = heading;
 	cp->current_linear_speed = linear_speed;
 }
 
@@ -404,7 +560,7 @@ static void chassis_set_distance_lte(struct chassis_planner *cp, uint16_t distan
 	cp->end_conditions = END_COND_DISTANCE_LTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
-	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
+	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
@@ -417,7 +573,7 @@ static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distan
 	cp->end_conditions = END_COND_DISTANCE_GTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
-	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
+	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
@@ -433,7 +589,7 @@ static void chassis_set_distance_lte_relative(struct chassis_planner *cp, uint16
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
+	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 }
@@ -446,7 +602,7 @@ static void chassis_set_distance_gte_relative(struct chassis_planner *cp, uint16
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
+	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 }
@@ -460,6 +616,19 @@ static void chassis_set_beam(struct chassis_planner *cp, int8_t speed)
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	// Don't actually need the laser, but keeping it running saves some time
 	cp->sensors = SENSOR_FRONT_RANGE;
+	cp->active = true;
+}
+
+static void chassis_set_blob_to_distance(struct chassis_planner *cp, uint16_t distance, int8_t speed)
+{
+	cp->end_conditions = END_COND_DISTANCE_LTE;
+	cp->target_distance = distance;
+	cp->target_distance_valid = true;
+	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
+	cp->linear_speed = speed;
+	cp->speed_control = SPEED_CONTROL_FIXED;
+	cp->heading_control = HEADING_CONTROL_RED_BLOB;
+	cp->sensors = SENSOR_FRONT_RANGE | SENSOR_CAMERA;
 	cp->active = true;
 }
 
@@ -492,13 +661,15 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	bool entering = task->state_entry;
 	task->state_entry = false;
 
-	log_printf(&util_logger, "coord tick: %d", task->coord_state, entering);
+	log_printf(&util_logger, "coord tick: %d, %d", task->coord_state, entering);
 
 	switch (task->coord_state) {
 	case COORD_STATE_PERIMETER_APPROACH:
 		if (entering) {
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
+			// TODO: shouldn't stop.
+			chassis_stop(&task->cp);
 			//set_chassis_to_heading_distance(perim_heading[hidx], speed, distance);
 		}
 
@@ -521,8 +692,22 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_TREE_APPROACH:
 		if (entering) {
-			chassis_set_distance_gte(&task->cp, 110, fast_speed);
-			//set_chassis_to_red_blob_distance(distance, speed);
+			//chassis_set_distance_gte(&task->cp, 110, fast_speed);
+			chassis_set_blob_to_distance(&task->cp, 210, fast_speed);
+			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
+			picker_set(&task->pp, PICKER_STATE_OPEN);
+		}
+
+		log_printf(&util_logger, "c: %d, p: %d, b: %d",
+				chassis_done(&task->cp), picker_done(&task->pp), boom_done(&task->bp));
+
+		if (chassis_done(&task->cp) && picker_done(&task->pp) && boom_done(&task->bp)) {
+			log_printf(&util_logger, "move to BRANCH_APPROACH");
+			coord_set_state(task, COORD_STATE_BRANCH_APPROACH);
+		}
+		break;
+	case COORD_STATE_BRANCH_POSITION:
+		if (entering) {
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 		}
@@ -594,8 +779,8 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 
 		if (picker_done(&task->pp)) {
 			task->apple_idx++;
-			log_printf(&util_logger, "move to TREE_APROACH");
-			coord_set_state(task, COORD_STATE_TREE_APPROACH);
+			log_printf(&util_logger, "move to BRANCH_POSITION");
+			coord_set_state(task, COORD_STATE_BRANCH_POSITION);
 		}
 		break;
 	case COORD_STATE_TREE_RETREAT:
