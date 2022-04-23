@@ -1303,6 +1303,8 @@ static void __platform_all_stop(struct platform *platform)
 	__platform_boom_extend_controller_set_enabled(platform, false);
 	__platform_servo_level_set_enabled(platform, false);
 	__platform_heading_controller_set_enabled(platform, false);
+	__platform_vl53l0x_set_continuous(platform->front_laser, false);
+	__platform_vl53l0x_set_continuous(platform->rear_laser, false);
 	platform->linear_speed = 0;
 }
 
