@@ -192,6 +192,7 @@ static void rc_task_on_start(struct planner_task *ptask, struct platform *platfo
 	platform_boom_trajectory_controller_adjust_target(platform,
 			(struct v2){ 0, 0 },
 			TRAJECTORY_ADJUST_SET_BOTH_TO_CURRENT);
+	platform_ioe_pwm_set_enabled(platform, 2, true);
 }
 
 static void rc_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
