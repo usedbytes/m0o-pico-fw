@@ -182,6 +182,16 @@ static void boom_set(struct boom_planner *bp, struct v2 abs_target)
 	}
 }
 
+enum sensor_state {
+	SENSOR_STATE_IDLE = 0,
+	SENSOR_STATE_LASER_REQUEST,
+	SENSOR_STATE_LASER_PENDING,
+	SENSOR_STATE_LASER_DONE,
+	SENSOR_STATE_CAMERA_REQUEST,
+	SENSOR_STATE_CAMERA_PENDING,
+	SENSOR_STATE_CAMERA_DONE,
+};
+
 struct chassis_planner {
 	enum {
 		SPEED_CONTROL_FIXED,
@@ -204,16 +214,17 @@ struct chassis_planner {
 #define SENSOR_CAMERA           (1 << 1)
 	uint32_t sensors;
 
-	bool camera_frame_pending;
+	enum sensor_state sensor_state;
+
 	bool camera_frame_done;
 	struct camera_buffer *buf;
+	int left, right, bottom;
 
 	absolute_time_t front_range_ts;
-	bool front_range_pending;
+	uint16_t front_range;
 	uint16_t target_distance;
 	bool target_distance_valid;
 	int16_t relative_distance;
-	uint16_t set_distance;
 
 	float target_heading;
 
@@ -263,7 +274,6 @@ static void chassis_camera_cb(struct camera_buffer *buf, void *p)
 	struct chassis_planner *cp = (struct chassis_planner *)p;
 
 	cp->camera_frame_done = true;
-	cp->camera_frame_pending = false;
 	log_printf(&util_logger, "camera done");
 }
 
@@ -386,62 +396,95 @@ static int find_red_blob(struct camera_buffer *buf, int *left, int *right, int *
 	return mid;
 }
 
+static uint32_t chassis_handle_sensors(struct chassis_planner *cp, struct platform *platform,
+		struct platform_status_report *status)
+{
+	uint32_t readings = 0;
+
+	enum sensor_state prev_state;
+	do {
+		prev_state = cp->sensor_state;
+
+		log_printf(&util_logger, "sensor loop: %d", prev_state);
+
+		switch (prev_state) {
+		case SENSOR_STATE_IDLE:
+			if (cp->sensors & SENSOR_FRONT_RANGE) {
+				cp->sensor_state = SENSOR_STATE_LASER_REQUEST;
+			} else if (cp->sensors & SENSOR_CAMERA) {
+				cp->sensor_state = SENSOR_STATE_CAMERA_REQUEST;
+			}
+			break;
+		case SENSOR_STATE_LASER_REQUEST:
+			cp->front_range_ts = get_absolute_time();
+			log_printf(&util_logger, "request ts: %"PRId64, cp->front_range_ts);
+			platform_vl53l0x_trigger_single(platform, 0);
+			cp->sensor_state = SENSOR_STATE_LASER_PENDING;
+			break;
+		case SENSOR_STATE_LASER_PENDING:
+			log_printf(&util_logger, "pending ts: %"PRId64", 0x%2x", status->front_laser.timestamp, status->front_laser.range_status);
+			if (to_us_since_boot(status->front_laser.timestamp) > to_us_since_boot(cp->front_range_ts)) {
+				cp->sensor_state = SENSOR_STATE_LASER_DONE;
+			}
+			break;
+		case SENSOR_STATE_LASER_DONE:
+			cp->front_range_ts = status->front_laser.timestamp;
+			cp->front_range = status->front_laser.range_mm;
+			readings |= SENSOR_FRONT_RANGE;
+			if (cp->sensors & SENSOR_CAMERA) {
+				cp->sensor_state = SENSOR_STATE_CAMERA_REQUEST;
+			} else if (cp->sensors & SENSOR_FRONT_RANGE) {
+				cp->sensor_state = SENSOR_STATE_LASER_REQUEST;
+			}
+			break;
+		case SENSOR_STATE_CAMERA_REQUEST:
+			cp->camera_frame_done = false;
+			platform_camera_capture(platform, cp->buf, chassis_camera_cb, cp);
+			cp->sensor_state = SENSOR_STATE_CAMERA_PENDING;
+			break;
+		case SENSOR_STATE_CAMERA_PENDING:
+			if (cp->camera_frame_done) {
+				cp->sensor_state = SENSOR_STATE_CAMERA_DONE;
+			}
+			break;
+		case SENSOR_STATE_CAMERA_DONE:
+			find_red_blob(cp->buf, &cp->left, &cp->right, &cp->bottom);
+			readings |= SENSOR_CAMERA;
+			if (cp->sensors & SENSOR_FRONT_RANGE) {
+				cp->sensor_state = SENSOR_STATE_LASER_REQUEST;
+			} else if (cp->sensors & SENSOR_CAMERA) {
+				cp->sensor_state = SENSOR_STATE_CAMERA_REQUEST;
+			} else {
+				cp->sensor_state = SENSOR_STATE_IDLE;
+			}
+			break;
+		}
+	} while (prev_state != cp->sensor_state);
+
+	return readings;
+}
+
 static void chassis_tick(struct chassis_planner *cp, struct platform *platform, struct platform_status_report *status)
 {
 	const int distance_tolerance = 2;
 	const int min_distance = 30;
-	bool have_front_range = false;
-	uint16_t front_range = 4096;
 
 	// Handle sensor requests
 
-	if (status->front_laser.timestamp > cp->front_range_ts) {
-		cp->front_range_ts = status->front_laser.timestamp;
-		cp->front_range_pending = false;
+	uint32_t readings = chassis_handle_sensors(cp, platform, status);
 
+	bool have_front_range = false;
+	uint16_t front_range = 4096;
+	if (readings & SENSOR_FRONT_RANGE) {
 		have_front_range = true;
-		front_range = status->front_laser.range_mm;
-		log_printf(&util_logger, "laser done %d", front_range);
-	}
-
-	if (cp->sensors & SENSOR_FRONT_RANGE) {
-		// Can't request laser while camera is capturing
-		log_printf(&util_logger, "LASER: %d && (%d || %d)",
-			!cp->front_range_pending,
-			!(cp->sensors & SENSOR_CAMERA),
-			 cp->camera_frame_done);
-
-		if (!cp->front_range_pending &&
-		   ((!(cp->sensors & SENSOR_CAMERA)) || cp->camera_frame_done)) {
-			cp->front_range_pending = true;
-			cp->front_range_ts = get_absolute_time();
-			platform_vl53l0x_trigger_single(platform, 0);
-			log_printf(&util_logger, "laser trigger");
-		}
+		front_range = cp->front_range;
 	}
 
 	bool have_frame = false;
-	int left = 0, right = 0, bottom;
-	if (cp->camera_frame_done) {
-		cp->camera_frame_done = false;
-
-		find_red_blob(cp->buf, &left, &right, &bottom);
-		log_printf(&util_logger, "frame done: %d, %d, %d", left, right, bottom);
-
-		if ((right - left) >= 2) {
+	if (readings & SENSOR_CAMERA) {
+		log_printf(&util_logger, "frame done: %d, %d, %d", cp->left, cp->right, cp->bottom);
+		if ((cp->right - cp->left) >= 2) {
 			have_frame = true;
-		}
-	}
-
-	if (cp->sensors & SENSOR_CAMERA) {
-		log_printf(&util_logger, "CAMERA: %d && %d",
-			!cp->camera_frame_pending, !cp->front_range_pending);
-		if (!cp->camera_frame_pending && !cp->front_range_pending) {
-			// Request frame
-			cp->camera_frame_pending = true;
-			cp->camera_frame_done = false;
-			platform_camera_capture(platform, cp->buf, chassis_camera_cb, cp);
-			log_printf(&util_logger, "camera trigger");
 		}
 	}
 
@@ -495,7 +538,7 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	case HEADING_CONTROL_RED_BLOB:
 		if (have_frame) {
 			const float deg_per_pixel = 0.835;
-			float diff = (left - 20) * deg_per_pixel;
+			float diff = (cp->left - 20) * deg_per_pixel;
 			log_printf(&util_logger, "blob diff: %3.2f", diff);
 			heading = normalise_angle(status->heading / 16.0) + diff;
 		} else {
@@ -560,7 +603,6 @@ static void chassis_set_distance_lte(struct chassis_planner *cp, uint16_t distan
 	cp->end_conditions = END_COND_DISTANCE_LTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
-	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
@@ -573,7 +615,6 @@ static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distan
 	cp->end_conditions = END_COND_DISTANCE_GTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
-	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
@@ -589,7 +630,6 @@ static void chassis_set_distance_lte_relative(struct chassis_planner *cp, uint16
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 }
@@ -602,7 +642,6 @@ static void chassis_set_distance_gte_relative(struct chassis_planner *cp, uint16
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	//cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 }
@@ -614,7 +653,6 @@ static void chassis_set_beam(struct chassis_planner *cp, int8_t speed)
 	cp->target_distance_valid = false;
 	cp->speed_control = SPEED_CONTROL_FIXED;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
-	// Don't actually need the laser, but keeping it running saves some time
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 }
@@ -624,7 +662,6 @@ static void chassis_set_blob_to_distance(struct chassis_planner *cp, uint16_t di
 	cp->end_conditions = END_COND_DISTANCE_LTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
-	cp->front_range_ts = delayed_by_us(cp->front_range_ts, 1);
 	cp->linear_speed = speed;
 	cp->speed_control = SPEED_CONTROL_FIXED;
 	cp->heading_control = HEADING_CONTROL_RED_BLOB;
@@ -811,6 +848,8 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	boom_tick(&task->bp, platform, status);
 	picker_tick(&task->pp, platform, status);
 	chassis_tick(&task->cp, platform, status);
+
+	log_printf(&util_logger, "coord tick done: %d", task->coord_state);
 }
 
 static void apple_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
@@ -836,6 +875,7 @@ static void apple_task_handle_input(struct planner_task *ptask, struct platform 
 		coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
 		task->pick_state = PICK_STATE_IDLE;
 		task->run_coord = true;
+		log_printf(&util_logger, "coord input: %d, %d", task->coord_state, task->state_entry);
 	}
 }
 
