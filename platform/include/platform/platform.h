@@ -19,7 +19,7 @@
 #include "ioexpander.h"
 #include "kinematics.h"
 
-#define PLATFORM_ALARM_POOL_SIZE    16
+#define PLATFORM_ALARM_POOL_SIZE    32
 
 typedef void (*scheduled_func_t)(absolute_time_t scheduled, void *data);
 

@@ -105,6 +105,7 @@ static int64_t __scheduled_message_cb(alarm_id_t id, void *user_data) {
 	struct platform_alarm_slot *slot = (struct platform_alarm_slot *)user_data;
 	if (!slot) {
 		// Erk?
+		log_printf(&util_logger, "no slot");
 		return 0;
 	}
 
@@ -132,6 +133,7 @@ static alarm_id_t platform_schedule_message(struct platform *platform, struct pl
 
 	__alarm_slot_release(slot);
 	if (id == 0 && !queue_try_add(&platform->queue, msg)) {
+		log_printf(&util_logger, "scheduled message dropped");
 		return -1;
 	}
 
@@ -814,6 +816,11 @@ static void __platform_boom_trajectory_controller_set_enabled(struct platform *p
 		__platform_boom_extend_controller_set_enabled(platform, true);
 		__platform_boom_lift_controller_set_enabled(platform, true);
 
+		if (__controllers_are_enabled(platform, CONTROLLER_BOOM_TRAJECTORY)) {
+			log_printf(&util_logger, "trajectory already enabled");
+			return;
+		}
+
 		__controllers_set_enabled(platform, CONTROLLER_BOOM_TRAJECTORY);
 		platform_schedule_function(platform, platform_boom_trajectory_controller_run, platform, get_absolute_time());
 	} else {
@@ -1282,7 +1289,7 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 	platform->angular_speed = clamp8(output);
 	chassis_set(&platform->chassis, platform->linear_speed, platform->angular_speed);
 
-	log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
+	//log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
 
 	platform_schedule_function(platform, platform_heading_controller_run, platform, scheduled + HEADING_CONTROLLER_TICK);
 }
