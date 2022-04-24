@@ -26,6 +26,7 @@ typedef void (*scheduled_func_t)(absolute_time_t scheduled, void *data);
 enum pid_controller_id {
 	PID_CONTROLLER_ID_LIFT   = 1,
 	PID_CONTROLLER_ID_EXTEND = 2,
+	PID_CONTROLLER_ID_HEADING = 3,
 };
 
 enum trajectory_adjust {

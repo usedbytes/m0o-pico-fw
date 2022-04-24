@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include <inttypes.h>
+#include <math.h>
+
+#include "pico/stdlib.h"
 
 #include "camera/camera.h"
 #include "camera/format.h"
@@ -18,8 +21,8 @@
 #define APPLE_SERVO_EJECT    2000
 
 const struct v2 approach_boom_targets[] = {
-	{ 5, 124 },
-	{ 25, 255 },
+	{ 5, 126 },
+	{ 25, 257 },
 };
 
 const unsigned int num_apples = sizeof(approach_boom_targets) / sizeof(approach_boom_targets[0]);
@@ -60,6 +63,7 @@ enum coordinator_state {
 	COORD_STATE_STOP = 0,
 
 	COORD_STATE_PERIMETER_APPROACH,
+	COORD_STATE_PERIMETER_APPROACH_SLOW,
 	COORD_STATE_TREE_POINT,
 	COORD_STATE_TREE_APPROACH,
 	COORD_STATE_BRANCH_APPROACH,
@@ -69,9 +73,8 @@ enum coordinator_state {
 	COORD_STATE_BACK_UP,
 	COORD_STATE_MOVE_TO_EJECT,
 	COORD_STATE_EJECT_STATIONARY,
-	COORD_STATE_TREE_RETREAT,
-	// POINT_CORNER
-	// POINT_PERIMITER
+	COORD_STATE_TREE_TURN_AWAY,
+	COORD_STATE_CORNER_APPROACH,
 };
 
 enum picker_state {
@@ -159,7 +162,7 @@ static void boom_tick(struct boom_planner *bp, struct platform *platform, struct
 		bp->set = bp->requested;
 		log_printf(&util_logger, "update boom target: (%3.2f, %3.2f)", bp->set.x, bp->set.y);
 		platform_boom_trajectory_controller_adjust_target(platform,
-			bp->requested,
+			bp->set,
 			TRAJECTORY_ADJUST_SET_ABSOLUTE);
 		platform_boom_trajectory_controller_set_enabled(platform, true);
 	} else {
@@ -177,9 +180,13 @@ static bool boom_done(struct boom_planner *bp)
 static void boom_set(struct boom_planner *bp, struct v2 abs_target)
 {
 	bp->requested = abs_target;
+	log_printf(&util_logger, "boom_set: (%3.2f, %3.2f)", bp->requested.x, bp->requested.y);
+	bp->done = false;
+	/*
 	if ((abs_target.x != bp->set.x) || (abs_target.y != bp->set.y)) {
 		bp->done = false;
 	}
+	*/
 }
 
 enum sensor_state {
@@ -233,6 +240,7 @@ struct chassis_planner {
 #define END_COND_DISTANCE_GTE    (1 << 2)
 #define END_CONDS_DISTANCE       (END_COND_DISTANCE_EQ | END_COND_DISTANCE_LTE | END_COND_DISTANCE_GTE)
 #define END_COND_BEAM            (1 << 3)
+#define END_COND_HEADING_EQ      (1 << 4)
 	uint32_t end_conditions;
 
 	bool active;
@@ -257,6 +265,7 @@ struct apple_task {
 	enum pick_state pick_state;
 	bool state_waiting;
 	int apple_idx;
+	int branch_idx;
 	absolute_time_t timestamp;
 	bool sequence;
 	uint16_t target_distance;
@@ -267,6 +276,8 @@ struct apple_task {
 	struct chassis_planner cp;
 	struct boom_planner bp;
 	struct picker_planner pp;
+
+	float east;
 };
 
 static void chassis_camera_cb(struct camera_buffer *buf, void *p)
@@ -422,7 +433,7 @@ static uint32_t chassis_handle_sensors(struct chassis_planner *cp, struct platfo
 			cp->sensor_state = SENSOR_STATE_LASER_PENDING;
 			break;
 		case SENSOR_STATE_LASER_PENDING:
-			log_printf(&util_logger, "pending ts: %"PRId64", 0x%2x", status->front_laser.timestamp, status->front_laser.range_status);
+			log_printf(&util_logger, "pending ts: %"PRId64", 0x%x", status->front_laser.timestamp, status->front_laser.range_status);
 			if (to_us_since_boot(status->front_laser.timestamp) > to_us_since_boot(cp->front_range_ts)) {
 				cp->sensor_state = SENSOR_STATE_LASER_DONE;
 			}
@@ -466,6 +477,7 @@ static uint32_t chassis_handle_sensors(struct chassis_planner *cp, struct platfo
 
 static void chassis_tick(struct chassis_planner *cp, struct platform *platform, struct platform_status_report *status)
 {
+	const float cone_angle = 2.0;
 	const int distance_tolerance = 2;
 	const int min_distance = 30;
 
@@ -510,7 +522,7 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	case SPEED_CONTROL_DISTANCE:
 		if (have_front_range) {
 			int diff = front_range - cp->target_distance;
-			//log_printf(&util_logger, "distance control diff: %d", diff);
+			log_printf(&util_logger, "distance control diff: %d", diff);
 			if (diff > 0) {
 				// TODO: Signs.
 				linear_speed = cp->linear_speed;
@@ -570,6 +582,14 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 		}
 	}
 
+	{
+		float diff = normalise_angle(status->heading / 16.0) - heading;
+		float absdiff = fabsf(diff);
+		if (absdiff <= cone_angle) {
+			current_conditions |= END_COND_HEADING_EQ;
+		}
+	}
+
 	if (status->adc >= 3000) {
 		current_conditions |= END_COND_BEAM;
 	}
@@ -591,6 +611,7 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	}
 
 	if (cp->active) {
+		log_printf(&util_logger, "chassis set %d, %3.2f", linear_speed, heading);
 		platform_heading_controller_set(platform, linear_speed, heading);
 	}
 
@@ -680,6 +701,44 @@ static void chassis_stop(struct chassis_planner *cp)
 	cp->active = true;
 }
 
+static void chassis_set_heading_to_distance(struct chassis_planner *cp, uint16_t distance, float heading, int8_t speed)
+{
+	cp->end_conditions = END_COND_DISTANCE_EQ;
+	cp->target_distance = distance;
+	cp->target_distance_valid = true;
+	cp->linear_speed = speed;
+	cp->speed_control = SPEED_CONTROL_DISTANCE;
+	cp->heading_control = HEADING_CONTROL_EXPLICIT;
+	cp->target_heading = heading;
+	cp->sensors = SENSOR_FRONT_RANGE;
+	cp->active = true;
+}
+
+static void chassis_set_heading_to_distance_lte(struct chassis_planner *cp, uint16_t distance, float heading, int8_t speed)
+{
+	cp->end_conditions = END_COND_DISTANCE_LTE;
+	cp->target_distance = distance;
+	cp->target_distance_valid = true;
+	cp->linear_speed = speed;
+	cp->speed_control = SPEED_CONTROL_DISTANCE;
+	cp->heading_control = HEADING_CONTROL_EXPLICIT;
+	cp->target_heading = heading;
+	cp->sensors = SENSOR_FRONT_RANGE;
+	cp->active = true;
+}
+
+static void chassis_turn_to(struct chassis_planner *cp, float heading, int8_t speed)
+{
+	cp->end_conditions = END_COND_HEADING_EQ;
+	cp->target_distance_valid = false;
+	cp->linear_speed = speed;
+	cp->speed_control = SPEED_CONTROL_FIXED;
+	cp->heading_control = HEADING_CONTROL_EXPLICIT;
+	cp->target_heading = heading;
+	cp->sensors = 0;
+	cp->active = true;
+}
+
 static bool chassis_done(struct chassis_planner *cp)
 {
 	return !cp->active;
@@ -699,15 +758,38 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	task->state_entry = false;
 
 	log_printf(&util_logger, "coord tick: %d, %d", task->coord_state, entering);
+	log_printf(&util_logger, "c: %d, p: %d, b: %d",
+			chassis_done(&task->cp), picker_done(&task->pp), boom_done(&task->bp));
+
 
 	switch (task->coord_state) {
 	case COORD_STATE_PERIMETER_APPROACH:
 		if (entering) {
+			if (task->branch_idx == 0) {
+				task->east = normalise_angle(status->heading / 16.0);
+			}
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
-			// TODO: shouldn't stop.
-			chassis_stop(&task->cp);
-			//set_chassis_to_heading_distance(perim_heading[hidx], speed, distance);
+
+			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			chassis_set_heading_to_distance_lte(&task->cp, 650, heading, fast_speed * 2);
+		}
+
+		if (chassis_done(&task->cp)) {
+			log_printf(&util_logger, "move to PERIMETER_APPROACH_SLOW");
+			coord_set_state(task, COORD_STATE_PERIMETER_APPROACH_SLOW);
+		}
+		break;
+	case COORD_STATE_PERIMETER_APPROACH_SLOW:
+		if (entering) {
+			if (task->branch_idx == 0) {
+				task->east = normalise_angle(status->heading / 16.0);
+			}
+			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
+			picker_set(&task->pp, PICKER_STATE_OPEN);
+
+			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			chassis_set_heading_to_distance(&task->cp, 550, heading, slow_speed);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -720,6 +802,8 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			//set_chassis_to_heading(tree_heading[hidx]);
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
+			float heading = normalise_angle(task->east - ((task->branch_idx + 1) * 90));
+			chassis_turn_to(&task->cp, heading, 0);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -734,9 +818,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 		}
-
-		log_printf(&util_logger, "c: %d, p: %d, b: %d",
-				chassis_done(&task->cp), picker_done(&task->pp), boom_done(&task->bp));
 
 		if (chassis_done(&task->cp) && picker_done(&task->pp) && boom_done(&task->bp)) {
 			log_printf(&util_logger, "move to BRANCH_APPROACH");
@@ -805,8 +886,8 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 				coord_set_state(task, COORD_STATE_EJECT_STATIONARY);
 			}
 		} else {
-			log_printf(&util_logger, "move to RETREAT");
-			coord_set_state(task, COORD_STATE_TREE_RETREAT);
+			log_printf(&util_logger, "move to TREE_TURN_AWAY");
+			coord_set_state(task, COORD_STATE_TREE_TURN_AWAY);
 		}
 		break;
 	case COORD_STATE_EJECT_STATIONARY:
@@ -820,9 +901,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			coord_set_state(task, COORD_STATE_BRANCH_POSITION);
 		}
 		break;
-	case COORD_STATE_TREE_RETREAT:
+	case COORD_STATE_TREE_TURN_AWAY:
 		if (entering) {
-			//set_chassis_to_heading_rear_distance(heading, distance, speed);
+			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			chassis_turn_to(&task->cp, heading, 0);
 		}
 
 		if (boom_done(&task->bp) && (picker_state(&task->pp) == PICKER_STATE_CLOSED)) {
@@ -830,12 +912,34 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			picker_set(&task->pp, PICKER_STATE_EJECT);
 		}
 
-		// TODO: Don't really need to wait for the boom/picker here
-		// Could be done later
-		if (chassis_done(&task->cp) && boom_done(&task->bp) && (picker_state(&task->pp) == PICKER_STATE_EJECT)) {
-			log_printf(&util_logger, "move to STOP");
-			coord_set_state(task, COORD_STATE_STOP);
+		if (chassis_done(&task->cp)) {
+			log_printf(&util_logger, "move to CORNER_APPROACH");
+			coord_set_state(task, COORD_STATE_CORNER_APPROACH);
 			task->apple_idx = 0;
+		}
+		break;
+	case COORD_STATE_CORNER_APPROACH:
+		if (entering) {
+			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			chassis_set_heading_to_distance_lte(&task->cp, 120, heading, fast_speed * 2);
+		}
+
+		if (boom_done(&task->bp) && (picker_state(&task->pp) == PICKER_STATE_CLOSED)) {
+			log_printf(&util_logger, "ejecting");
+			picker_set(&task->pp, PICKER_STATE_EJECT);
+		}
+
+		if (chassis_done(&task->cp) && boom_done(&task->bp) && (picker_state(&task->pp) == PICKER_STATE_EJECT)) {
+			task->apple_idx = 0;
+			task->branch_idx++;
+
+			if (task->branch_idx <= 1) {
+				log_printf(&util_logger, "move to PERIMETER_APPROACH");
+				coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
+			} else {
+				log_printf(&util_logger, "move to STOP");
+				coord_set_state(task, COORD_STATE_STOP);
+			}
 		}
 		break;
 	case COORD_STATE_STOP:
@@ -872,6 +976,7 @@ static void apple_task_handle_input(struct planner_task *ptask, struct platform 
 
 	if (input->buttons.pressed & BTN_TRIANGLE) {
 		task->apple_idx = 0;
+		task->branch_idx = 0;
 		coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
 		task->pick_state = PICK_STATE_IDLE;
 		task->run_coord = true;
@@ -1143,6 +1248,7 @@ static void apple_task_on_start(struct planner_task *ptask, struct platform *pla
 	task->pick_state = PICK_STATE_IDLE;
 	chassis_stop(&task->cp);
 	coord_set_state(task, COORD_STATE_STOP);
+	task->cp.controller_active = false;
 	task->run_coord = false;
 	platform_servo_level(platform, true);
 }

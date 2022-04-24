@@ -1057,6 +1057,9 @@ static void __platform_set_pid_coeffs(struct platform *platform, enum pid_contro
 	case PID_CONTROLLER_ID_EXTEND:
 		fcontroller_set_tunings(&platform->boom_extend_pos_controller, kp, ki, kd, BOOM_EXTEND_CONTROLLER_TICK);
 		break;
+	case PID_CONTROLLER_ID_HEADING:
+		fcontroller_set_tunings(&platform->heading_controller, kp, ki, kd, HEADING_CONTROLLER_TICK);
+		break;
 	}
 }
 
