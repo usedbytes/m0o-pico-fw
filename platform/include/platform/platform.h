@@ -181,6 +181,8 @@ struct platform {
 	absolute_time_t heading_timestamp;
 	uint32_t heading_update_us;
 	int16_t heading;
+	int last_sign;
+	int small_diff_tick;
 
 #define CONTROLLER_BOOM_LIFT       (1 << 0)
 #define CONTROLLER_BOOM_EXTEND     (1 << 1)

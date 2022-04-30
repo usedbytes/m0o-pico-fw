@@ -19,6 +19,7 @@
 #include "log.h"
 #include "plan/planner.h"
 #include "plan/apples.h"
+#include "plan/direction.h"
 #include "plan/servo.h"
 #include "plan/trough.h"
 #include "platform/platform.h"
@@ -354,7 +355,7 @@ const char *handle_system_input(struct platform *platform, struct input_state *i
 	}
 
 	if (input->hat.pressed & HAT_LEFT) {
-		return "servo";
+		return "direction";
 	}
 
 	return NULL;
@@ -435,6 +436,10 @@ int main()
 		{
 			"servo",
 			servo_get_task(),
+		},
+		{
+			"direction",
+			direction_get_task(),
 		},
 	};
 	const int n_tasks = sizeof(task_list) / sizeof(task_list[0]);

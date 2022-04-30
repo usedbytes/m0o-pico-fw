@@ -1268,6 +1268,7 @@ int platform_heading_controller_set_enabled(struct platform *platform, bool enab
 
 static void platform_heading_controller_run(absolute_time_t scheduled, void *data)
 {
+	const float max_nudge = 80;
 	struct platform *platform = data;
 	if (!__controllers_are_enabled(platform, CONTROLLER_HEADING)) {
 		return;
@@ -1285,14 +1286,41 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 	//log_printf(&util_logger, "current heading raw: %3.2f", current);
 
 	struct fcontroller *c = &platform->heading_controller;
-	float diff = c->setpoint - current;
+	float diff = normalise_angle(c->setpoint - current);
 	current = c->setpoint + normalise_angle(diff);
 
 	float output = fcontroller_tick(c, current);
-	platform->angular_speed = clamp8(output);
+
+	// HAX: Some nasty special casing to try and improve reliability of
+	// turning on the spot
+	const float small = 5;
+	if (platform->linear_speed == 0) {
+		if ((fabsf(diff) <= small)) {
+			if (fabsf(diff) <= 0.5) {
+				platform->small_diff_tick = 0;
+			} else if (signbit(diff) != platform->last_sign) {
+				platform->small_diff_tick = 0;
+			} else {
+				platform->small_diff_tick++;
+			}
+			platform->last_sign = signbit(diff);
+		} else {
+			platform->small_diff_tick = 0;
+		}
+	} else {
+		platform->small_diff_tick = 0;
+	}
+
+	if (platform->small_diff_tick >= fabsf(output)) {
+		platform->angular_speed = clamp(copysignf(platform->small_diff_tick, output), -max_nudge, max_nudge);
+	} else {
+		platform->angular_speed = clamp8(output);
+	}
+
 	chassis_set(&platform->chassis, platform->linear_speed, platform->angular_speed);
 
-	//log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, out: %d", current, c->setpoint, platform->angular_speed);
+	//log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, diff: %3.2f, out: %d, nudge: %d",
+	//		current, c->setpoint, diff, platform->angular_speed, platform->small_diff_tick);
 
 	platform_schedule_function(platform, platform_heading_controller_run, platform, scheduled + HEADING_CONTROLLER_TICK);
 }
