@@ -1266,8 +1266,13 @@ int platform_heading_controller_set_enabled(struct platform *platform, bool enab
 	return platform_send_message(platform, &msg);
 }
 
+static int iabs(int a) {
+	return a < 0 ? -a : a;
+}
+
 static void platform_heading_controller_run(absolute_time_t scheduled, void *data)
 {
+	static float last_diff = 0;
 	const float max_nudge = 80;
 	struct platform *platform = data;
 	if (!__controllers_are_enabled(platform, CONTROLLER_HEADING)) {
@@ -1294,7 +1299,7 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 	// HAX: Some nasty special casing to try and improve reliability of
 	// turning on the spot
 	const float small = 5;
-	if (platform->linear_speed == 0) {
+	if (iabs(platform->linear_speed) < 10) {
 		if ((fabsf(diff) <= small)) {
 			if (fabsf(diff) <= 0.5) {
 				platform->small_diff_tick = 0;
@@ -1307,6 +1312,9 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 		} else {
 			platform->small_diff_tick = 0;
 		}
+	} else if ((fabsf(diff) <= small) && (last_diff == diff)) {
+		last_diff = diff;
+		platform->small_diff_tick++;
 	} else {
 		platform->small_diff_tick = 0;
 	}
@@ -1319,8 +1327,8 @@ static void platform_heading_controller_run(absolute_time_t scheduled, void *dat
 
 	chassis_set(&platform->chassis, platform->linear_speed, platform->angular_speed);
 
-	//log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, diff: %3.2f, out: %d, nudge: %d",
-	//		current, c->setpoint, diff, platform->angular_speed, platform->small_diff_tick);
+	log_printf(&util_logger, "heading_controller: in: %3.2f, set: %3.2f, diff: %3.2f, out: %d, nudge: %d",
+			current, c->setpoint, diff, platform->angular_speed, platform->small_diff_tick);
 
 	platform_schedule_function(platform, platform_heading_controller_run, platform, scheduled + HEADING_CONTROLLER_TICK);
 }

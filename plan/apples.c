@@ -75,6 +75,7 @@ enum coordinator_state {
 	COORD_STATE_EJECT_STATIONARY,
 	COORD_STATE_TREE_TURN_AWAY,
 	COORD_STATE_CORNER_APPROACH,
+	COORD_STATE_CORNER_TURN,
 };
 
 enum picker_state {
@@ -154,12 +155,14 @@ struct boom_planner {
 	struct v2 requested;
 	struct v2 set;
 	bool done;
+	bool invalidate;
 };
 
 static void boom_tick(struct boom_planner *bp, struct platform *platform, struct platform_status_report *status)
 {
-	if ((bp->requested.x != bp->set.x) || (bp->requested.y != bp->set.y)) {
+	if (bp->invalidate || (bp->requested.x != bp->set.x) || (bp->requested.y != bp->set.y)) {
 		bp->set = bp->requested;
+		bp->invalidate = false;
 		log_printf(&util_logger, "update boom target: (%3.2f, %3.2f)", bp->set.x, bp->set.y);
 		platform_boom_trajectory_controller_adjust_target(platform,
 			bp->set,
@@ -189,6 +192,11 @@ static void boom_set(struct boom_planner *bp, struct v2 abs_target)
 	*/
 }
 
+static void boom_invalidate(struct boom_planner *bp)
+{
+	bp->invalidate = true;
+}
+
 enum sensor_state {
 	SENSOR_STATE_IDLE = 0,
 	SENSOR_STATE_LASER_REQUEST,
@@ -212,6 +220,8 @@ struct chassis_planner {
 	} heading_control;
 	bool controller_active;
 
+	absolute_time_t last_change_ts;
+
 	int8_t linear_speed;
 	int8_t current_linear_speed;
 
@@ -228,6 +238,7 @@ struct chassis_planner {
 	int left, right, bottom;
 
 	absolute_time_t front_range_ts;
+	absolute_time_t front_trig_ts;
 	uint16_t front_range;
 	uint16_t target_distance;
 	bool target_distance_valid;
@@ -416,7 +427,7 @@ static uint32_t chassis_handle_sensors(struct chassis_planner *cp, struct platfo
 	do {
 		prev_state = cp->sensor_state;
 
-		log_printf(&util_logger, "sensor loop: %d", prev_state);
+		//log_printf(&util_logger, "sensor loop: %d", prev_state);
 
 		switch (prev_state) {
 		case SENSOR_STATE_IDLE:
@@ -427,25 +438,32 @@ static uint32_t chassis_handle_sensors(struct chassis_planner *cp, struct platfo
 			}
 			break;
 		case SENSOR_STATE_LASER_REQUEST:
-			cp->front_range_ts = get_absolute_time();
-			log_printf(&util_logger, "request ts: %"PRId64, cp->front_range_ts);
+			cp->front_trig_ts = get_absolute_time();
+			//log_printf(&util_logger, "request ts: %"PRId64, cp->front_range_ts);
 			platform_vl53l0x_trigger_single(platform, 0);
 			cp->sensor_state = SENSOR_STATE_LASER_PENDING;
 			break;
 		case SENSOR_STATE_LASER_PENDING:
-			log_printf(&util_logger, "pending ts: %"PRId64", 0x%x", status->front_laser.timestamp, status->front_laser.range_status);
-			if (to_us_since_boot(status->front_laser.timestamp) > to_us_since_boot(cp->front_range_ts)) {
+			//log_printf(&util_logger, "pending ts: %"PRId64", 0x%x", status->front_laser.timestamp, status->front_laser.range_status);
+			if (to_us_since_boot(status->front_laser.timestamp) > to_us_since_boot(cp->front_trig_ts)) {
 				cp->sensor_state = SENSOR_STATE_LASER_DONE;
 			}
 			break;
 		case SENSOR_STATE_LASER_DONE:
-			cp->front_range_ts = status->front_laser.timestamp;
-			cp->front_range = status->front_laser.range_mm;
-			readings |= SENSOR_FRONT_RANGE;
 			if (cp->sensors & SENSOR_CAMERA) {
 				cp->sensor_state = SENSOR_STATE_CAMERA_REQUEST;
 			} else if (cp->sensors & SENSOR_FRONT_RANGE) {
 				cp->sensor_state = SENSOR_STATE_LASER_REQUEST;
+			}
+
+			// Ignore stale readings
+			if (to_us_since_boot(cp->front_trig_ts) > to_us_since_boot(cp->last_change_ts)) {
+				//log_printf(&util_logger, "ignoring stale reading %"PRId64" > %"PRId64,
+				//	to_us_since_boot(status->front_laser.timestamp),
+				//	to_us_since_boot(cp->last_change_ts));
+				cp->front_range_ts = status->front_laser.timestamp;
+				cp->front_range = status->front_laser.range_mm;
+				readings |= SENSOR_FRONT_RANGE;
 			}
 			break;
 		case SENSOR_STATE_CAMERA_REQUEST:
@@ -502,8 +520,8 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 
 	// Handle state changes
 
-	log_printf(&util_logger, "have_frame: %d, have_front_range: %d, speed_control: %d, heading_control: %d",
-			have_frame, have_front_range, cp->speed_control, cp->heading_control);
+	log_printf(&util_logger, "frm: %d, rng: %d (%d), spd: %d, hdg: %d",
+			have_frame, have_front_range, front_range, cp->speed_control, cp->heading_control);
 
 	if (have_front_range && (cp->speed_control == SPEED_CONTROL_DISTANCE_RELATIVE)) {
 		log_printf(&util_logger, "setting relative distance");
@@ -522,7 +540,7 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	case SPEED_CONTROL_DISTANCE:
 		if (have_front_range) {
 			int diff = front_range - cp->target_distance;
-			log_printf(&util_logger, "distance control diff: %d", diff);
+			log_printf(&util_logger, "dist ctrl diff: %d", diff);
 			if (diff > 0) {
 				// TODO: Signs.
 				linear_speed = cp->linear_speed;
@@ -594,11 +612,11 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 		current_conditions |= END_COND_BEAM;
 	}
 
-	log_printf(&util_logger, "current_conditions: 0x%x, end_conditions: 0x%x", current_conditions, cp->end_conditions);
+	log_printf(&util_logger, "cur_cond: 0x%x, end_cond: 0x%x", current_conditions, cp->end_conditions);
 
 	if ((current_conditions & cp->end_conditions) == cp->end_conditions) {
 		// Stop!
-		log_printf(&util_logger, "end conditions reached");
+		log_printf(&util_logger, "end cond hit");
 		linear_speed = 0;
 		cp->active = false;
 	}
@@ -629,6 +647,7 @@ static void chassis_set_distance_lte(struct chassis_planner *cp, uint16_t distan
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distance, int8_t speed)
@@ -641,6 +660,7 @@ static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distan
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;// | SENSOR_CAMERA;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_set_distance_lte_relative(struct chassis_planner *cp, uint16_t relative_distance, int8_t speed)
@@ -653,6 +673,7 @@ static void chassis_set_distance_lte_relative(struct chassis_planner *cp, uint16
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_set_distance_gte_relative(struct chassis_planner *cp, uint16_t relative_distance, int8_t speed)
@@ -665,6 +686,7 @@ static void chassis_set_distance_gte_relative(struct chassis_planner *cp, uint16
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_set_beam(struct chassis_planner *cp, int8_t speed)
@@ -676,6 +698,7 @@ static void chassis_set_beam(struct chassis_planner *cp, int8_t speed)
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_set_blob_to_distance(struct chassis_planner *cp, uint16_t distance, int8_t speed)
@@ -688,6 +711,7 @@ static void chassis_set_blob_to_distance(struct chassis_planner *cp, uint16_t di
 	cp->heading_control = HEADING_CONTROL_RED_BLOB;
 	cp->sensors = SENSOR_FRONT_RANGE | SENSOR_CAMERA;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_stop(struct chassis_planner *cp)
@@ -699,6 +723,7 @@ static void chassis_stop(struct chassis_planner *cp)
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = 0;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_set_heading_to_distance(struct chassis_planner *cp, uint16_t distance, float heading, int8_t speed)
@@ -712,6 +737,7 @@ static void chassis_set_heading_to_distance(struct chassis_planner *cp, uint16_t
 	cp->target_heading = heading;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_set_heading_to_distance_lte(struct chassis_planner *cp, uint16_t distance, float heading, int8_t speed)
@@ -725,6 +751,7 @@ static void chassis_set_heading_to_distance_lte(struct chassis_planner *cp, uint
 	cp->target_heading = heading;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static void chassis_turn_to(struct chassis_planner *cp, float heading, int8_t speed)
@@ -737,6 +764,7 @@ static void chassis_turn_to(struct chassis_planner *cp, float heading, int8_t sp
 	cp->target_heading = heading;
 	cp->sensors = 0;
 	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
 }
 
 static bool chassis_done(struct chassis_planner *cp)
@@ -752,12 +780,13 @@ static void coord_set_state(struct apple_task *task, enum coordinator_state stat
 
 static void coord_tick(struct apple_task *task, struct platform *platform, struct platform_status_report *status)
 {
+	const int n_branch = 4;
 	const int slow_speed = 2;
 	const int fast_speed = 6;
 	bool entering = task->state_entry;
 	task->state_entry = false;
 
-	log_printf(&util_logger, "coord tick: %d, %d", task->coord_state, entering);
+	log_printf(&util_logger, ">>> coord tick: %d, %d", task->coord_state, entering);
 	log_printf(&util_logger, "c: %d, p: %d, b: %d",
 			chassis_done(&task->cp), picker_done(&task->pp), boom_done(&task->bp));
 
@@ -819,6 +848,7 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 		}
 
+		// FIXME: Chassis can get done "momentarily"? and we don't progress
 		if (chassis_done(&task->cp) && picker_done(&task->pp) && boom_done(&task->bp)) {
 			log_printf(&util_logger, "move to BRANCH_APPROACH");
 			coord_set_state(task, COORD_STATE_BRANCH_APPROACH);
@@ -933,13 +963,24 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			task->apple_idx = 0;
 			task->branch_idx++;
 
-			if (task->branch_idx <= 1) {
-				log_printf(&util_logger, "move to PERIMETER_APPROACH");
-				coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
+			if (task->branch_idx < n_branch) {
+				log_printf(&util_logger, "move to CORNER_TURN");
+				coord_set_state(task, COORD_STATE_CORNER_TURN);
 			} else {
 				log_printf(&util_logger, "move to STOP");
 				coord_set_state(task, COORD_STATE_STOP);
 			}
+		}
+		break;
+	case COORD_STATE_CORNER_TURN:
+		if (entering) {
+			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			chassis_turn_to(&task->cp, heading, 0);
+		}
+
+		if (chassis_done(&task->cp)) {
+			log_printf(&util_logger, "move to PERIMETER_APPROACH");
+			coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
 		}
 		break;
 	case COORD_STATE_STOP:
@@ -953,7 +994,7 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	picker_tick(&task->pp, platform, status);
 	chassis_tick(&task->cp, platform, status);
 
-	log_printf(&util_logger, "coord tick done: %d", task->coord_state);
+	log_printf(&util_logger, "<<< coord tick done: %d", task->coord_state);
 }
 
 static void apple_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
@@ -1247,6 +1288,7 @@ static void apple_task_on_start(struct planner_task *ptask, struct platform *pla
 	struct apple_task *task = (struct apple_task *)ptask;
 	task->pick_state = PICK_STATE_IDLE;
 	chassis_stop(&task->cp);
+	boom_invalidate(&task->bp);
 	coord_set_state(task, COORD_STATE_STOP);
 	task->cp.controller_active = false;
 	task->run_coord = false;
