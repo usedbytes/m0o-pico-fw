@@ -207,17 +207,23 @@ enum sensor_state {
 	SENSOR_STATE_CAMERA_DONE,
 };
 
+enum speed_control{
+	SPEED_CONTROL_FIXED,
+	SPEED_CONTROL_FRONT_DISTANCE,
+	SPEED_CONTROL_FRONT_DISTANCE_RELATIVE,
+	SPEED_CONTROL_REAR_DISTANCE,
+	SPEED_CONTROL_REAR_DISTANCE_RELATIVE,
+};
+
+enum heading_control {
+	HEADING_CONTROL_FORWARD,
+	HEADING_CONTROL_EXPLICIT,
+	HEADING_CONTROL_RED_BLOB,
+};
+
 struct chassis_planner {
-	enum {
-		SPEED_CONTROL_FIXED,
-		SPEED_CONTROL_DISTANCE,
-		SPEED_CONTROL_DISTANCE_RELATIVE,
-	} speed_control;
-	enum {
-		HEADING_CONTROL_FORWARD,
-		HEADING_CONTROL_EXPLICIT,
-		HEADING_CONTROL_RED_BLOB,
-	} heading_control;
+	enum speed_control speed_control;
+	enum heading_control heading_control;
 	bool controller_active;
 
 	absolute_time_t last_change_ts;
@@ -229,29 +235,38 @@ struct chassis_planner {
 
 #define SENSOR_FRONT_RANGE      (1 << 0)
 #define SENSOR_CAMERA           (1 << 1)
+#define SENSOR_REAR_RANGE       (1 << 2)
 	uint32_t sensors;
 
-	enum sensor_state sensor_state;
+	struct {
+		enum sensor_state state;
+		absolute_time_t trig_ts;
+		uint16_t range;
+		int left, right, bottom;
+		bool frame_done;
+		struct camera_buffer *buf;
+	} front_sensors;
 
-	bool camera_frame_done;
-	struct camera_buffer *buf;
-	int left, right, bottom;
+	struct {
+		enum sensor_state state;
+		absolute_time_t trig_ts;
+		uint16_t range;
+	} rear_sensors;
 
-	absolute_time_t front_range_ts;
-	absolute_time_t front_trig_ts;
-	uint16_t front_range;
-	uint16_t target_distance;
+	int16_t target_distance;
 	bool target_distance_valid;
 	int16_t relative_distance;
 
 	float target_heading;
 
-#define END_COND_DISTANCE_EQ     (1 << 0)
-#define END_COND_DISTANCE_LTE    (1 << 1)
-#define END_COND_DISTANCE_GTE    (1 << 2)
-#define END_CONDS_DISTANCE       (END_COND_DISTANCE_EQ | END_COND_DISTANCE_LTE | END_COND_DISTANCE_GTE)
-#define END_COND_BEAM            (1 << 3)
-#define END_COND_HEADING_EQ      (1 << 4)
+#define END_COND_FRONT_DISTANCE_EQ    (1 << 0)
+#define END_COND_FRONT_DISTANCE_LTE   (1 << 1)
+#define END_COND_FRONT_DISTANCE_GTE   (1 << 2)
+#define END_COND_REAR_DISTANCE_EQ     (1 << 3)
+#define END_COND_REAR_DISTANCE_LTE    (1 << 4)
+#define END_COND_REAR_DISTANCE_GTE    (1 << 5)
+#define END_COND_BEAM                 (1 << 6)
+#define END_COND_HEADING_EQ           (1 << 7)
 	uint32_t end_conditions;
 
 	bool active;
@@ -295,7 +310,7 @@ static void chassis_camera_cb(struct camera_buffer *buf, void *p)
 {
 	struct chassis_planner *cp = (struct chassis_planner *)p;
 
-	cp->camera_frame_done = true;
+	cp->front_sensors.frame_done = true;
 	log_printf(&util_logger, "camera done");
 }
 
@@ -425,70 +440,106 @@ static uint32_t chassis_handle_sensors(struct chassis_planner *cp, struct platfo
 
 	enum sensor_state prev_state;
 	do {
-		prev_state = cp->sensor_state;
+		prev_state = cp->front_sensors.state;
 
 		//log_printf(&util_logger, "sensor loop: %d", prev_state);
 
 		switch (prev_state) {
 		case SENSOR_STATE_IDLE:
 			if (cp->sensors & SENSOR_FRONT_RANGE) {
-				cp->sensor_state = SENSOR_STATE_LASER_REQUEST;
+				cp->front_sensors.state = SENSOR_STATE_LASER_REQUEST;
 			} else if (cp->sensors & SENSOR_CAMERA) {
-				cp->sensor_state = SENSOR_STATE_CAMERA_REQUEST;
+				cp->front_sensors.state = SENSOR_STATE_CAMERA_REQUEST;
 			}
 			break;
 		case SENSOR_STATE_LASER_REQUEST:
-			cp->front_trig_ts = get_absolute_time();
+			cp->front_sensors.trig_ts = get_absolute_time();
 			//log_printf(&util_logger, "request ts: %"PRId64, cp->front_range_ts);
 			platform_vl53l0x_trigger_single(platform, 0);
-			cp->sensor_state = SENSOR_STATE_LASER_PENDING;
+			cp->front_sensors.state = SENSOR_STATE_LASER_PENDING;
 			break;
 		case SENSOR_STATE_LASER_PENDING:
 			//log_printf(&util_logger, "pending ts: %"PRId64", 0x%x", status->front_laser.timestamp, status->front_laser.range_status);
-			if (to_us_since_boot(status->front_laser.timestamp) > to_us_since_boot(cp->front_trig_ts)) {
-				cp->sensor_state = SENSOR_STATE_LASER_DONE;
+			if (to_us_since_boot(status->front_laser.timestamp) > to_us_since_boot(cp->front_sensors.trig_ts)) {
+				cp->front_sensors.state = SENSOR_STATE_LASER_DONE;
 			}
 			break;
 		case SENSOR_STATE_LASER_DONE:
 			if (cp->sensors & SENSOR_CAMERA) {
-				cp->sensor_state = SENSOR_STATE_CAMERA_REQUEST;
+				cp->front_sensors.state = SENSOR_STATE_CAMERA_REQUEST;
 			} else if (cp->sensors & SENSOR_FRONT_RANGE) {
-				cp->sensor_state = SENSOR_STATE_LASER_REQUEST;
+				cp->front_sensors.state = SENSOR_STATE_LASER_REQUEST;
 			}
 
 			// Ignore stale readings
-			if (to_us_since_boot(cp->front_trig_ts) > to_us_since_boot(cp->last_change_ts)) {
+			if (to_us_since_boot(cp->front_sensors.trig_ts) > to_us_since_boot(cp->last_change_ts)) {
 				//log_printf(&util_logger, "ignoring stale reading %"PRId64" > %"PRId64,
 				//	to_us_since_boot(status->front_laser.timestamp),
 				//	to_us_since_boot(cp->last_change_ts));
-				cp->front_range_ts = status->front_laser.timestamp;
-				cp->front_range = status->front_laser.range_mm;
+				cp->front_sensors.range = status->front_laser.range_mm;
 				readings |= SENSOR_FRONT_RANGE;
 			}
 			break;
 		case SENSOR_STATE_CAMERA_REQUEST:
-			cp->camera_frame_done = false;
-			platform_camera_capture(platform, cp->buf, chassis_camera_cb, cp);
-			cp->sensor_state = SENSOR_STATE_CAMERA_PENDING;
+			cp->front_sensors.frame_done = false;
+			platform_camera_capture(platform, cp->front_sensors.buf, chassis_camera_cb, cp);
+			cp->front_sensors.state = SENSOR_STATE_CAMERA_PENDING;
 			break;
 		case SENSOR_STATE_CAMERA_PENDING:
-			if (cp->camera_frame_done) {
-				cp->sensor_state = SENSOR_STATE_CAMERA_DONE;
+			if (cp->front_sensors.frame_done) {
+				cp->front_sensors.state = SENSOR_STATE_CAMERA_DONE;
 			}
 			break;
 		case SENSOR_STATE_CAMERA_DONE:
-			find_red_blob(cp->buf, &cp->left, &cp->right, &cp->bottom);
+			find_red_blob(cp->front_sensors.buf, &cp->front_sensors.left,
+					&cp->front_sensors.right, &cp->front_sensors.bottom);
 			readings |= SENSOR_CAMERA;
 			if (cp->sensors & SENSOR_FRONT_RANGE) {
-				cp->sensor_state = SENSOR_STATE_LASER_REQUEST;
+				cp->front_sensors.state = SENSOR_STATE_LASER_REQUEST;
 			} else if (cp->sensors & SENSOR_CAMERA) {
-				cp->sensor_state = SENSOR_STATE_CAMERA_REQUEST;
+				cp->front_sensors.state = SENSOR_STATE_CAMERA_REQUEST;
 			} else {
-				cp->sensor_state = SENSOR_STATE_IDLE;
+				cp->front_sensors.state = SENSOR_STATE_IDLE;
 			}
 			break;
 		}
-	} while (prev_state != cp->sensor_state);
+	} while (prev_state != cp->front_sensors.state);
+
+	do {
+		prev_state = cp->rear_sensors.state;
+
+		switch (prev_state) {
+		case SENSOR_STATE_IDLE:
+			if (cp->sensors & SENSOR_REAR_RANGE) {
+				cp->rear_sensors.state = SENSOR_STATE_LASER_REQUEST;
+			}
+			break;
+		case SENSOR_STATE_LASER_REQUEST:
+			cp->rear_sensors.trig_ts = get_absolute_time();
+			platform_vl53l0x_trigger_single(platform, 1);
+			cp->rear_sensors.state = SENSOR_STATE_LASER_PENDING;
+			break;
+		case SENSOR_STATE_LASER_PENDING:
+			if (to_us_since_boot(status->rear_laser.timestamp) > to_us_since_boot(cp->rear_sensors.trig_ts)) {
+				cp->rear_sensors.state = SENSOR_STATE_LASER_DONE;
+			}
+			break;
+		case SENSOR_STATE_LASER_DONE:
+			if (cp->sensors & SENSOR_REAR_RANGE) {
+				cp->rear_sensors.state = SENSOR_STATE_LASER_REQUEST;
+			}
+
+			// Ignore stale readings
+			if (to_us_since_boot(cp->rear_sensors.trig_ts) > to_us_since_boot(cp->last_change_ts)) {
+				cp->rear_sensors.range = status->rear_laser.range_mm;
+				readings |= SENSOR_REAR_RANGE;
+			}
+			break;
+		default:
+			// No camera handling for rear sensors
+			break;
+		}
+	} while (prev_state != cp->rear_sensors.state);
 
 	return readings;
 }
@@ -507,13 +558,21 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	uint16_t front_range = 4096;
 	if (readings & SENSOR_FRONT_RANGE) {
 		have_front_range = true;
-		front_range = cp->front_range;
+		front_range = cp->front_sensors.range;
+	}
+
+	bool have_rear_range = false;
+	uint16_t rear_range = 4096;
+	if (readings & SENSOR_REAR_RANGE) {
+		have_rear_range = true;
+		rear_range = cp->rear_sensors.range;
 	}
 
 	bool have_frame = false;
 	if (readings & SENSOR_CAMERA) {
-		log_printf(&util_logger, "frame done: %d, %d, %d", cp->left, cp->right, cp->bottom);
-		if ((cp->right - cp->left) >= 2) {
+		log_printf(&util_logger, "frame done: %d, %d, %d",
+				cp->front_sensors.left, cp->front_sensors.right, cp->front_sensors.bottom);
+		if ((cp->front_sensors.right - cp->front_sensors.left) >= 2) {
 			have_frame = true;
 		}
 	}
@@ -523,21 +582,31 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	log_printf(&util_logger, "frm: %d, rng: %d (%d), spd: %d, hdg: %d",
 			have_frame, have_front_range, front_range, cp->speed_control, cp->heading_control);
 
-	if (have_front_range && (cp->speed_control == SPEED_CONTROL_DISTANCE_RELATIVE)) {
+	if (have_front_range && (cp->speed_control == SPEED_CONTROL_FRONT_DISTANCE_RELATIVE)) {
 		log_printf(&util_logger, "setting relative distance");
-		cp->target_distance = front_range + cp->relative_distance;
+		cp->target_distance = front_range + cp->target_distance;
 		if (cp->target_distance < min_distance) {
 			cp->target_distance = min_distance;
 		}
 		cp->target_distance_valid = true;
-		cp->speed_control = SPEED_CONTROL_DISTANCE;
+		cp->speed_control = SPEED_CONTROL_FRONT_DISTANCE;
+	}
+
+	if (have_rear_range && (cp->speed_control == SPEED_CONTROL_REAR_DISTANCE_RELATIVE)) {
+		log_printf(&util_logger, "setting relative rdistance");
+		cp->target_distance = rear_range + cp->target_distance;
+		if (cp->target_distance < min_distance) {
+			cp->target_distance = min_distance;
+		}
+		cp->target_distance_valid = true;
+		cp->speed_control = SPEED_CONTROL_REAR_DISTANCE;
 	}
 
 	// Adjust speed/heading
 
 	int8_t linear_speed = 0;
 	switch (cp->speed_control) {
-	case SPEED_CONTROL_DISTANCE:
+	case SPEED_CONTROL_FRONT_DISTANCE:
 		if (have_front_range) {
 			int diff = front_range - cp->target_distance;
 			log_printf(&util_logger, "dist ctrl diff: %d", diff);
@@ -547,6 +616,21 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 			} else if (diff < 0) {
 				// TODO: Signs.
 				linear_speed = -cp->linear_speed;
+			}
+		} else {
+			linear_speed = cp->current_linear_speed;
+		}
+		break;
+	case SPEED_CONTROL_REAR_DISTANCE:
+		if (have_rear_range) {
+			int diff = rear_range - cp->target_distance;
+			log_printf(&util_logger, "rdist ctrl diff: %d", diff);
+			if (diff > 0) {
+				// TODO: Signs.
+				linear_speed = -cp->linear_speed;
+			} else if (diff < 0) {
+				// TODO: Signs.
+				linear_speed = cp->linear_speed;
 			}
 		} else {
 			linear_speed = cp->current_linear_speed;
@@ -568,7 +652,7 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	case HEADING_CONTROL_RED_BLOB:
 		if (have_frame) {
 			const float deg_per_pixel = 0.835;
-			float diff = (cp->left - 20) * deg_per_pixel;
+			float diff = (cp->front_sensors.left - 20) * deg_per_pixel;
 			log_printf(&util_logger, "blob diff: %3.2f", diff);
 			heading = normalise_angle(status->heading / 16.0) + diff;
 		} else {
@@ -586,17 +670,34 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 	if (have_front_range && cp->target_distance_valid) {
 		int diff = front_range - cp->target_distance;
 		if (diff < 0) {
-			current_conditions |= END_COND_DISTANCE_LTE;
+			current_conditions |= END_COND_FRONT_DISTANCE_LTE;
 			if (diff > -distance_tolerance) {
-				current_conditions |= END_COND_DISTANCE_EQ;
+				current_conditions |= END_COND_FRONT_DISTANCE_EQ;
 			}
 		} else if (diff > 0) {
-			current_conditions |= END_COND_DISTANCE_GTE;
+			current_conditions |= END_COND_FRONT_DISTANCE_GTE;
 			if (diff < distance_tolerance) {
-				current_conditions |= END_COND_DISTANCE_EQ;
+				current_conditions |= END_COND_FRONT_DISTANCE_EQ;
 			}
 		} else {
-			current_conditions |= END_COND_DISTANCE_EQ;
+			current_conditions |= END_COND_FRONT_DISTANCE_EQ;
+		}
+	}
+
+	if (have_rear_range && cp->target_distance_valid) {
+		int diff = rear_range - cp->target_distance;
+		if (diff < 0) {
+			current_conditions |= END_COND_REAR_DISTANCE_LTE;
+			if (diff > -distance_tolerance) {
+				current_conditions |= END_COND_REAR_DISTANCE_EQ;
+			}
+		} else if (diff > 0) {
+			current_conditions |= END_COND_REAR_DISTANCE_GTE;
+			if (diff < distance_tolerance) {
+				current_conditions |= END_COND_REAR_DISTANCE_EQ;
+			}
+		} else {
+			current_conditions |= END_COND_REAR_DISTANCE_EQ;
 		}
 	}
 
@@ -639,11 +740,11 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 
 static void chassis_set_distance_lte(struct chassis_planner *cp, uint16_t distance, int8_t speed)
 {
-	cp->end_conditions = END_COND_DISTANCE_LTE;
+	cp->end_conditions = END_COND_FRONT_DISTANCE_LTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
 	cp->linear_speed = speed;
-	cp->speed_control = SPEED_CONTROL_DISTANCE;
+	cp->speed_control = SPEED_CONTROL_FRONT_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
@@ -652,11 +753,11 @@ static void chassis_set_distance_lte(struct chassis_planner *cp, uint16_t distan
 
 static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distance, int8_t speed)
 {
-	cp->end_conditions = END_COND_DISTANCE_GTE;
+	cp->end_conditions = END_COND_FRONT_DISTANCE_GTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
 	cp->linear_speed = speed;
-	cp->speed_control = SPEED_CONTROL_DISTANCE;
+	cp->speed_control = SPEED_CONTROL_FRONT_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;// | SENSOR_CAMERA;
 	cp->active = true;
@@ -665,11 +766,11 @@ static void chassis_set_distance_gte(struct chassis_planner *cp, uint16_t distan
 
 static void chassis_set_distance_lte_relative(struct chassis_planner *cp, uint16_t relative_distance, int8_t speed)
 {
-	cp->end_conditions = END_COND_DISTANCE_LTE;
+	cp->end_conditions = END_COND_FRONT_DISTANCE_LTE;
 	cp->relative_distance = relative_distance;
 	cp->target_distance_valid = false;
 	cp->linear_speed = speed;
-	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
+	cp->speed_control = SPEED_CONTROL_FRONT_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
@@ -678,11 +779,11 @@ static void chassis_set_distance_lte_relative(struct chassis_planner *cp, uint16
 
 static void chassis_set_distance_gte_relative(struct chassis_planner *cp, uint16_t relative_distance, int8_t speed)
 {
-	cp->end_conditions = END_COND_DISTANCE_GTE;
+	cp->end_conditions = END_COND_FRONT_DISTANCE_GTE;
 	cp->relative_distance = relative_distance;
 	cp->target_distance_valid = false;
 	cp->linear_speed = speed;
-	cp->speed_control = SPEED_CONTROL_DISTANCE_RELATIVE;
+	cp->speed_control = SPEED_CONTROL_FRONT_DISTANCE_RELATIVE;
 	cp->heading_control = HEADING_CONTROL_FORWARD;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
@@ -703,7 +804,7 @@ static void chassis_set_beam(struct chassis_planner *cp, int8_t speed)
 
 static void chassis_set_blob_to_distance(struct chassis_planner *cp, uint16_t distance, int8_t speed)
 {
-	cp->end_conditions = END_COND_DISTANCE_LTE;
+	cp->end_conditions = END_COND_FRONT_DISTANCE_LTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
 	cp->linear_speed = speed;
@@ -726,27 +827,29 @@ static void chassis_stop(struct chassis_planner *cp)
 	cp->last_change_ts = get_absolute_time();
 }
 
+/*
 static void chassis_set_heading_to_distance(struct chassis_planner *cp, uint16_t distance, float heading, int8_t speed)
 {
-	cp->end_conditions = END_COND_DISTANCE_EQ;
+	cp->end_conditions = END_COND_FRONT_DISTANCE_EQ;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
 	cp->linear_speed = speed;
-	cp->speed_control = SPEED_CONTROL_DISTANCE;
+	cp->speed_control = SPEED_CONTROL_FRONT_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_EXPLICIT;
 	cp->target_heading = heading;
 	cp->sensors = SENSOR_FRONT_RANGE;
 	cp->active = true;
 	cp->last_change_ts = get_absolute_time();
 }
+*/
 
 static void chassis_set_heading_to_distance_lte(struct chassis_planner *cp, uint16_t distance, float heading, int8_t speed)
 {
-	cp->end_conditions = END_COND_DISTANCE_LTE;
+	cp->end_conditions = END_COND_FRONT_DISTANCE_LTE;
 	cp->target_distance = distance;
 	cp->target_distance_valid = true;
 	cp->linear_speed = speed;
-	cp->speed_control = SPEED_CONTROL_DISTANCE;
+	cp->speed_control = SPEED_CONTROL_FRONT_DISTANCE;
 	cp->heading_control = HEADING_CONTROL_EXPLICIT;
 	cp->target_heading = heading;
 	cp->sensors = SENSOR_FRONT_RANGE;
@@ -763,6 +866,79 @@ static void chassis_turn_to(struct chassis_planner *cp, float heading, int8_t sp
 	cp->heading_control = HEADING_CONTROL_EXPLICIT;
 	cp->target_heading = heading;
 	cp->sensors = 0;
+	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
+}
+
+enum distance_cond {
+	DISTANCE_COND_EQ  = END_COND_FRONT_DISTANCE_EQ,
+	DISTANCE_COND_LTE = END_COND_FRONT_DISTANCE_LTE,
+	DISTANCE_COND_GTE = END_COND_FRONT_DISTANCE_GTE,
+};
+
+static void chassis_set_control(
+		struct chassis_planner *cp,
+		enum speed_control speed_control, int16_t distance, int8_t speed,
+		enum heading_control heading_control, float heading,
+		uint32_t end_conditions)
+{
+	cp->end_conditions = end_conditions;
+	cp->target_distance = distance;
+	cp->target_distance_valid = ((speed_control == SPEED_CONTROL_FRONT_DISTANCE) ||
+			(speed_control == SPEED_CONTROL_REAR_DISTANCE));
+	cp->linear_speed = speed;
+	cp->speed_control = speed_control;
+	cp->heading_control = heading_control;
+	cp->target_heading = heading;
+	cp->sensors = 0;
+	if ((speed_control == SPEED_CONTROL_FRONT_DISTANCE) || (speed_control == SPEED_CONTROL_FRONT_DISTANCE_RELATIVE)) {
+		cp->sensors |= SENSOR_FRONT_RANGE;
+	}
+	if ((speed_control == SPEED_CONTROL_REAR_DISTANCE) || (speed_control == SPEED_CONTROL_REAR_DISTANCE_RELATIVE)) {
+		cp->sensors |= SENSOR_REAR_RANGE;
+	}
+	if (heading_control == HEADING_CONTROL_RED_BLOB) {
+		cp->sensors |= SENSOR_CAMERA;
+	}
+	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
+}
+
+static void chassis_set_heading_to_distance(
+		struct chassis_planner *cp, uint16_t distance, float heading, int8_t speed,
+		bool rear, bool relative, enum distance_cond cond)
+{
+	cp->end_conditions = cond << (rear ? 3 : 0);
+	cp->target_distance = distance;
+	cp->target_distance_valid = relative ? false : true;
+	cp->linear_speed = speed;
+	if (relative) {
+		cp->speed_control = rear ? SPEED_CONTROL_REAR_DISTANCE_RELATIVE : SPEED_CONTROL_FRONT_DISTANCE_RELATIVE;
+	} else {
+		cp->speed_control = rear ? SPEED_CONTROL_REAR_DISTANCE : SPEED_CONTROL_FRONT_DISTANCE;
+	}
+	cp->heading_control = HEADING_CONTROL_EXPLICIT;
+	cp->target_heading = heading;
+	cp->sensors = rear ? SENSOR_REAR_RANGE : SENSOR_FRONT_RANGE;
+	cp->active = true;
+	cp->last_change_ts = get_absolute_time();
+}
+
+static void chassis_set_distance(
+		struct chassis_planner *cp, uint16_t distance, int8_t speed,
+		bool rear, bool relative, enum distance_cond cond)
+{
+	cp->end_conditions = cond << (rear ? 3 : 0);
+	cp->target_distance = distance;
+	cp->target_distance_valid = relative ? false : true;
+	cp->linear_speed = speed;
+	if (relative) {
+		cp->speed_control = rear ? SPEED_CONTROL_REAR_DISTANCE_RELATIVE : SPEED_CONTROL_FRONT_DISTANCE_RELATIVE;
+	} else {
+		cp->speed_control = rear ? SPEED_CONTROL_REAR_DISTANCE : SPEED_CONTROL_FRONT_DISTANCE;
+	}
+	cp->heading_control = HEADING_CONTROL_FORWARD;
+	cp->sensors = rear ? SENSOR_REAR_RANGE : SENSOR_FRONT_RANGE;
 	cp->active = true;
 	cp->last_change_ts = get_absolute_time();
 }
@@ -801,7 +977,12 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 
 			float heading = normalise_angle(task->east - (task->branch_idx * 90));
-			chassis_set_heading_to_distance_lte(&task->cp, 650, heading, fast_speed * 2);
+			//chassis_set_heading_to_distance_lte(&task->cp, 650, heading, fast_speed * 2);
+			//chassis_set_heading_to_distance(&task->cp, 650, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
+			//chassis_set_heading_to_distance(&task->cp, 500, heading, fast_speed * 2, true, false, DISTANCE_COND_GTE);
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 500, fast_speed * 2,
+					HEADING_CONTROL_EXPLICIT, heading,
+					END_COND_REAR_DISTANCE_GTE);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -818,7 +999,11 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 
 			float heading = normalise_angle(task->east - (task->branch_idx * 90));
-			chassis_set_heading_to_distance(&task->cp, 550, heading, slow_speed);
+			//chassis_set_heading_to_distance(&task->cp, 550, heading, slow_speed, false, false, DISTANCE_COND_EQ);
+			//chassis_set_heading_to_distance(&task->cp, 605, heading, slow_speed, true, false, DISTANCE_COND_EQ);
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 615, slow_speed,
+					HEADING_CONTROL_EXPLICIT, heading,
+					END_COND_REAR_DISTANCE_EQ);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -832,7 +1017,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 			float heading = normalise_angle(task->east - ((task->branch_idx + 1) * 90));
-			chassis_turn_to(&task->cp, heading, 0);
+			//chassis_turn_to(&task->cp, heading, 0);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
+					HEADING_CONTROL_EXPLICIT, heading,
+					END_COND_HEADING_EQ);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -843,7 +1031,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	case COORD_STATE_TREE_APPROACH:
 		if (entering) {
 			//chassis_set_distance_gte(&task->cp, 110, fast_speed);
-			chassis_set_blob_to_distance(&task->cp, 210, fast_speed);
+			//chassis_set_blob_to_distance(&task->cp, 210, fast_speed);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE, 210, fast_speed,
+					HEADING_CONTROL_RED_BLOB, 0,
+					END_COND_FRONT_DISTANCE_LTE);
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 		}
@@ -867,7 +1058,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_BRANCH_APPROACH:
 		if (entering) {
-			chassis_set_beam(&task->cp, fast_speed);
+			//chassis_set_beam(&task->cp, fast_speed);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, fast_speed,
+					HEADING_CONTROL_FORWARD, 0,
+					END_COND_BEAM);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -877,7 +1071,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_APPLE_REACH:
 		if (entering) {
-			chassis_set_distance_lte_relative(&task->cp, -reach_distances[task->apple_idx], slow_speed);
+			//chassis_set_distance_lte_relative(&task->cp, -reach_distances[task->apple_idx], slow_speed);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE_RELATIVE, -reach_distances[task->apple_idx], slow_speed,
+					HEADING_CONTROL_FORWARD, 0,
+					END_COND_FRONT_DISTANCE_LTE);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -897,7 +1094,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_BACK_UP:
 		if (entering) {
-			chassis_set_distance_gte_relative(&task->cp, back_up_distances[task->apple_idx], fast_speed);
+			//chassis_set_distance_gte_relative(&task->cp, back_up_distances[task->apple_idx], fast_speed);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE_RELATIVE, back_up_distances[task->apple_idx], fast_speed,
+					HEADING_CONTROL_FORWARD, 0,
+					END_COND_FRONT_DISTANCE_GTE);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -934,7 +1134,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	case COORD_STATE_TREE_TURN_AWAY:
 		if (entering) {
 			float heading = normalise_angle(task->east - (task->branch_idx * 90));
-			chassis_turn_to(&task->cp, heading, 0);
+			//chassis_turn_to(&task->cp, heading, 0);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
+					HEADING_CONTROL_EXPLICIT, heading,
+					END_COND_HEADING_EQ);
 		}
 
 		if (boom_done(&task->bp) && (picker_state(&task->pp) == PICKER_STATE_CLOSED)) {
@@ -951,7 +1154,12 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	case COORD_STATE_CORNER_APPROACH:
 		if (entering) {
 			float heading = normalise_angle(task->east - (task->branch_idx * 90));
-			chassis_set_heading_to_distance_lte(&task->cp, 120, heading, fast_speed * 2);
+			//chassis_set_heading_to_distance_lte(&task->cp, 120, heading, fast_speed * 2);
+			//chassis_set_heading_to_distance(&task->cp, 120, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
+			//chassis_set_heading_to_distance(&task->cp, 1010, heading, fast_speed * 2, true, false, DISTANCE_COND_LTE);
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 1010, fast_speed * 2,
+					HEADING_CONTROL_EXPLICIT, heading,
+					END_COND_REAR_DISTANCE_GTE);
 		}
 
 		if (boom_done(&task->bp) && (picker_state(&task->pp) == PICKER_STATE_CLOSED)) {
@@ -975,7 +1183,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	case COORD_STATE_CORNER_TURN:
 		if (entering) {
 			float heading = normalise_angle(task->east - (task->branch_idx * 90));
-			chassis_turn_to(&task->cp, heading, 0);
+			//chassis_turn_to(&task->cp, heading, 0);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
+					HEADING_CONTROL_EXPLICIT, heading,
+					END_COND_HEADING_EQ);
 		}
 
 		if (chassis_done(&task->cp)) {
@@ -1307,7 +1518,7 @@ struct planner_task *apples_get_task(struct camera_buffer *buf)
 		.apple_idx = 0,
 	};
 
-	task.cp.buf = buf;
+	task.cp.front_sensors.buf = buf;
 
 	return &task.base;
 }
