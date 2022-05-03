@@ -42,6 +42,20 @@ const int back_up_distances[] = {
 	70,
 };
 
+const int rear_distances_makespace[] = {
+	600,
+	575,
+	575,
+	570,
+};
+
+const int corner_distances_makespace[] = {
+	1350,
+	1350,
+	1350,
+	1350,
+};
+
 enum pick_state {
 	PICK_STATE_IDLE = 0,
 	PICK_STATE_BOOM_APPROACH,
@@ -799,7 +813,7 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	const int n_branch = 4;
 	const int slow_speed = 2;
 	const int fast_speed = 6;
-	const int very_fast_speed = 18;
+	const int very_fast_speed = 24;
 	bool entering = task->state_entry;
 	task->state_entry = false;
 
@@ -821,7 +835,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			//chassis_set_heading_to_distance_lte(&task->cp, 650, heading, fast_speed * 2);
 			//chassis_set_heading_to_distance(&task->cp, 650, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
 			//chassis_set_heading_to_distance(&task->cp, 500, heading, fast_speed * 2, true, false, DISTANCE_COND_GTE);
-			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 500, very_fast_speed,
+			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 500, very_fast_speed,
+			//		HEADING_CONTROL_EXPLICIT, heading,
+			//		END_COND_REAR_DISTANCE_GTE);
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_makespace[task->branch_idx] - 100, very_fast_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
 					END_COND_REAR_DISTANCE_GTE);
 		}
@@ -842,7 +859,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			float heading = normalise_angle(task->east - (task->branch_idx * 90));
 			//chassis_set_heading_to_distance(&task->cp, 550, heading, slow_speed, false, false, DISTANCE_COND_EQ);
 			//chassis_set_heading_to_distance(&task->cp, 605, heading, slow_speed, true, false, DISTANCE_COND_EQ);
-			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 615, slow_speed,
+			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 615, slow_speed,
+			//		HEADING_CONTROL_EXPLICIT, heading,
+			//		END_COND_REAR_DISTANCE_EQ);
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_makespace[task->branch_idx], slow_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
 					END_COND_REAR_DISTANCE_EQ);
 		}
@@ -998,7 +1018,10 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			//chassis_set_heading_to_distance_lte(&task->cp, 120, heading, fast_speed * 2);
 			//chassis_set_heading_to_distance(&task->cp, 120, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
 			//chassis_set_heading_to_distance(&task->cp, 1010, heading, fast_speed * 2, true, false, DISTANCE_COND_LTE);
-			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 1010, very_fast_speed,
+			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 1010, very_fast_speed,
+			//		HEADING_CONTROL_EXPLICIT, heading,
+			//		END_COND_REAR_DISTANCE_GTE);
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, corner_distances_makespace[task->branch_idx], very_fast_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
 					END_COND_REAR_DISTANCE_GTE);
 		}
