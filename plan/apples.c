@@ -39,9 +39,10 @@ const int reach_distances[] = {
 
 const int back_up_distances[] = {
 	70,
-	70,
+	200,
 };
 
+// Note: Wrong direction!
 const int rear_distances_makespace[] = {
 	600,
 	575,
@@ -54,6 +55,27 @@ const int corner_distances_makespace[] = {
 	1350,
 	1350,
 	1350,
+};
+
+const int rear_distances_home[] = {
+	650,
+	650,
+	650,
+	650,
+};
+
+const int corner_distances_home[] = {
+	940,
+	940,
+	940,
+	940,
+};
+
+const int corner_front_distances_home[] = {
+	80,
+	80,
+	80,
+	80,
 };
 
 enum pick_state {
@@ -317,7 +339,7 @@ struct apple_task {
 	struct boom_planner bp;
 	struct picker_planner pp;
 
-	float east;
+	float west;
 };
 
 static void chassis_camera_cb(struct camera_buffer *buf, void *p)
@@ -593,8 +615,8 @@ static void chassis_tick(struct chassis_planner *cp, struct platform *platform, 
 
 	// Handle state changes
 
-	log_printf(&util_logger, "frm: %d, rng: %d (%d), spd: %d, hdg: %d",
-			have_frame, have_front_range, front_range, cp->speed_control, cp->heading_control);
+	log_printf(&util_logger, "frm: %d, rng: %d (%d), rrng: %d (%d) spd: %d, hdg: %d",
+			have_frame, have_front_range, front_range, have_rear_range, rear_range, cp->speed_control, cp->heading_control);
 
 	if (have_front_range && (cp->speed_control == SPEED_CONTROL_FRONT_DISTANCE_RELATIVE)) {
 		log_printf(&util_logger, "setting relative distance");
@@ -823,22 +845,37 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 
 
 	switch (task->coord_state) {
-	case COORD_STATE_PERIMETER_APPROACH:
+	case COORD_STATE_CORNER_TURN:
 		if (entering) {
 			if (task->branch_idx == 0) {
-				task->east = normalise_angle(status->heading / 16.0);
+				task->west = normalise_angle(status->heading / 16.0);
 			}
+			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
+			//chassis_turn_to(&task->cp, heading, 0);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
+					HEADING_CONTROL_EXPLICIT, heading,
+					END_COND_HEADING_EQ);
+			picker_set(&task->pp, PICKER_STATE_OPEN);
+		}
+
+		if (chassis_done(&task->cp)) {
+			log_printf(&util_logger, "move to PERIMETER_APPROACH");
+			coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
+		}
+		break;
+	case COORD_STATE_PERIMETER_APPROACH:
+		if (entering) {
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 
-			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
 			//chassis_set_heading_to_distance_lte(&task->cp, 650, heading, fast_speed * 2);
 			//chassis_set_heading_to_distance(&task->cp, 650, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
 			//chassis_set_heading_to_distance(&task->cp, 500, heading, fast_speed * 2, true, false, DISTANCE_COND_GTE);
 			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 500, very_fast_speed,
 			//		HEADING_CONTROL_EXPLICIT, heading,
 			//		END_COND_REAR_DISTANCE_GTE);
-			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_makespace[task->branch_idx] - 100, very_fast_speed,
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_home[task->branch_idx] - 100, very_fast_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
 					END_COND_REAR_DISTANCE_GTE);
 		}
@@ -850,19 +887,16 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_PERIMETER_APPROACH_SLOW:
 		if (entering) {
-			if (task->branch_idx == 0) {
-				task->east = normalise_angle(status->heading / 16.0);
-			}
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 
-			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
 			//chassis_set_heading_to_distance(&task->cp, 550, heading, slow_speed, false, false, DISTANCE_COND_EQ);
 			//chassis_set_heading_to_distance(&task->cp, 605, heading, slow_speed, true, false, DISTANCE_COND_EQ);
 			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 615, slow_speed,
 			//		HEADING_CONTROL_EXPLICIT, heading,
 			//		END_COND_REAR_DISTANCE_EQ);
-			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_makespace[task->branch_idx], slow_speed,
+			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_home[task->branch_idx], slow_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
 					END_COND_REAR_DISTANCE_EQ);
 		}
@@ -877,7 +911,7 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			//set_chassis_to_heading(tree_heading[hidx]);
 			boom_set(&task->bp, approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
-			float heading = normalise_angle(task->east - ((task->branch_idx + 1) * 90));
+			float heading = normalise_angle(task->west + ((task->branch_idx + 2) * 90));
 			//chassis_turn_to(&task->cp, heading, 0);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
 					HEADING_CONTROL_EXPLICIT, heading,
@@ -994,7 +1028,7 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_TREE_TURN_AWAY:
 		if (entering) {
-			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
 			//chassis_turn_to(&task->cp, heading, 0);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
 					HEADING_CONTROL_EXPLICIT, heading,
@@ -1014,16 +1048,19 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_CORNER_APPROACH:
 		if (entering) {
-			float heading = normalise_angle(task->east - (task->branch_idx * 90));
+			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
 			//chassis_set_heading_to_distance_lte(&task->cp, 120, heading, fast_speed * 2);
 			//chassis_set_heading_to_distance(&task->cp, 120, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
 			//chassis_set_heading_to_distance(&task->cp, 1010, heading, fast_speed * 2, true, false, DISTANCE_COND_LTE);
 			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 1010, very_fast_speed,
 			//		HEADING_CONTROL_EXPLICIT, heading,
 			//		END_COND_REAR_DISTANCE_GTE);
-			chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, corner_distances_makespace[task->branch_idx], very_fast_speed,
+			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, corner_distances_home[task->branch_idx], very_fast_speed,
+			//		HEADING_CONTROL_EXPLICIT, heading,
+			//		END_COND_REAR_DISTANCE_GTE);
+			chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE, corner_front_distances_home[task->branch_idx], very_fast_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
-					END_COND_REAR_DISTANCE_GTE);
+					END_COND_FRONT_DISTANCE_LTE);
 		}
 
 		if (boom_done(&task->bp) && (picker_state(&task->pp) == PICKER_STATE_CLOSED)) {
@@ -1042,20 +1079,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 				log_printf(&util_logger, "move to STOP");
 				coord_set_state(task, COORD_STATE_STOP);
 			}
-		}
-		break;
-	case COORD_STATE_CORNER_TURN:
-		if (entering) {
-			float heading = normalise_angle(task->east - (task->branch_idx * 90));
-			//chassis_turn_to(&task->cp, heading, 0);
-			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
-					HEADING_CONTROL_EXPLICIT, heading,
-					END_COND_HEADING_EQ);
-		}
-
-		if (chassis_done(&task->cp)) {
-			log_printf(&util_logger, "move to PERIMETER_APPROACH");
-			coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
 		}
 		break;
 	case COORD_STATE_STOP:
@@ -1094,7 +1117,7 @@ static void apple_task_handle_input(struct planner_task *ptask, struct platform 
 	if (input->buttons.pressed & BTN_TRIANGLE) {
 		task->apple_idx = 0;
 		task->branch_idx = 0;
-		coord_set_state(task, COORD_STATE_PERIMETER_APPROACH);
+		coord_set_state(task, COORD_STATE_CORNER_TURN);
 		task->pick_state = PICK_STATE_IDLE;
 		task->run_coord = true;
 		log_printf(&util_logger, "coord input: %d, %d", task->coord_state, task->state_entry);
