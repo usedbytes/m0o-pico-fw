@@ -862,16 +862,6 @@ static void chassis_stop(struct chassis_planner *cp)
 	chassis_set_control(cp, SPEED_CONTROL_FIXED, 0, 0,
 			HEADING_CONTROL_FORWARD, 0,
 			0);
-	/*
-	cp->end_conditions = 0;
-	cp->linear_speed = 0;
-	cp->target_distance_valid = false;
-	cp->speed_control = SPEED_CONTROL_FIXED;
-	cp->heading_control = HEADING_CONTROL_FORWARD;
-	cp->sensors = 0;
-	cp->active = true;
-	cp->last_change_ts = get_absolute_time();
-	*/
 }
 
 static bool chassis_done(struct chassis_planner *cp)
@@ -921,15 +911,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 
 			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
-			//chassis_set_heading_to_distance_lte(&task->cp, 650, heading, fast_speed * 2);
-			//chassis_set_heading_to_distance(&task->cp, 650, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
-			//chassis_set_heading_to_distance(&task->cp, 500, heading, fast_speed * 2, true, false, DISTANCE_COND_GTE);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 500, very_fast_speed,
-			//		HEADING_CONTROL_EXPLICIT, heading,
-			//		END_COND_REAR_DISTANCE_GTE);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_home[task->branch_idx] - 100, very_fast_speed,
-			//		HEADING_CONTROL_EXPLICIT, heading,
-			//		END_COND_REAR_DISTANCE_GTE);
 			chassis_set_control(&task->cp, tuning->perimeter_approach_speed_ctrl,
 					tuning->permiter_approach_distances[task->branch_idx] - 100, tuning->very_fast_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
@@ -947,14 +928,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 
 			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
-			//chassis_set_heading_to_distance(&task->cp, 550, heading, slow_speed, false, false, DISTANCE_COND_EQ);
-			//chassis_set_heading_to_distance(&task->cp, 605, heading, slow_speed, true, false, DISTANCE_COND_EQ);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 615, slow_speed,
-			//		HEADING_CONTROL_EXPLICIT, heading,
-			//		END_COND_REAR_DISTANCE_EQ);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, rear_distances_home[task->branch_idx], slow_speed,
-			//		HEADING_CONTROL_EXPLICIT, heading,
-			//		END_COND_REAR_DISTANCE_EQ);
 			chassis_set_control(&task->cp, tuning->perimeter_approach_speed_ctrl,
 					tuning->permiter_approach_distances[task->branch_idx], tuning->slow_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
@@ -968,11 +941,9 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_TREE_POINT:
 		if (entering) {
-			//set_chassis_to_heading(tree_heading[hidx]);
 			boom_set(&task->bp, tuning->approach_boom_targets[task->apple_idx]);
 			picker_set(&task->pp, PICKER_STATE_OPEN);
 			float heading = normalise_angle(task->west + ((task->branch_idx + 2) * 90));
-			//chassis_turn_to(&task->cp, heading, 0);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
 					HEADING_CONTROL_EXPLICIT, heading,
 					END_COND_HEADING_EQ);
@@ -985,8 +956,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_TREE_APPROACH:
 		if (entering) {
-			//chassis_set_distance_gte(&task->cp, 110, fast_speed);
-			//chassis_set_blob_to_distance(&task->cp, 210, fast_speed);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE, 210, tuning->fast_speed,
 					HEADING_CONTROL_RED_BLOB, 0,
 					END_COND_FRONT_DISTANCE_LTE);
@@ -1013,7 +982,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_BRANCH_APPROACH:
 		if (entering) {
-			//chassis_set_beam(&task->cp, fast_speed);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, tuning->fast_speed,
 					HEADING_CONTROL_FORWARD, 0,
 					END_COND_BEAM);
@@ -1026,10 +994,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_APPLE_REACH:
 		if (entering) {
-			//chassis_set_distance_lte_relative(&task->cp, -reach_distances[task->apple_idx], slow_speed);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE_RELATIVE, -reach_distances[task->apple_idx], slow_speed,
-			//		HEADING_CONTROL_FORWARD, 0,
-			//		END_COND_FRONT_DISTANCE_LTE);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE_RELATIVE,
 					-tuning->reach_distances[task->apple_idx], tuning->slow_speed,
 					HEADING_CONTROL_FORWARD, 0,
@@ -1053,7 +1017,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 		break;
 	case COORD_STATE_BACK_UP:
 		if (entering) {
-			//chassis_set_distance_gte_relative(&task->cp, back_up_distances[task->apple_idx], fast_speed);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE_RELATIVE,
 					tuning->back_up_distances[task->apple_idx], tuning->fast_speed,
 					HEADING_CONTROL_FORWARD, 0,
@@ -1094,7 +1057,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	case COORD_STATE_TREE_TURN_AWAY:
 		if (entering) {
 			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
-			//chassis_turn_to(&task->cp, heading, 0);
 			chassis_set_control(&task->cp, SPEED_CONTROL_FIXED, 0, 0,
 					HEADING_CONTROL_EXPLICIT, heading,
 					END_COND_HEADING_EQ);
@@ -1114,18 +1076,6 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 	case COORD_STATE_CORNER_APPROACH:
 		if (entering) {
 			float heading = normalise_angle(task->west + ((task->branch_idx + 1) * 90));
-			//chassis_set_heading_to_distance_lte(&task->cp, 120, heading, fast_speed * 2);
-			//chassis_set_heading_to_distance(&task->cp, 120, heading, fast_speed * 2, false, false, DISTANCE_COND_LTE);
-			//chassis_set_heading_to_distance(&task->cp, 1010, heading, fast_speed * 2, true, false, DISTANCE_COND_LTE);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, 1010, very_fast_speed,
-			//		HEADING_CONTROL_EXPLICIT, heading,
-			//		END_COND_REAR_DISTANCE_GTE);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_REAR_DISTANCE, corner_distances_home[task->branch_idx], very_fast_speed,
-			//		HEADING_CONTROL_EXPLICIT, heading,
-			//		END_COND_REAR_DISTANCE_GTE);
-			//chassis_set_control(&task->cp, SPEED_CONTROL_FRONT_DISTANCE, corner_front_distances_home[task->branch_idx], very_fast_speed,
-			//		HEADING_CONTROL_EXPLICIT, heading,
-			//		END_COND_FRONT_DISTANCE_LTE);
 			chassis_set_control(&task->cp, tuning->corner_approach_speed_ctrl,
 					tuning->corner_approach_distances[task->branch_idx], tuning->very_fast_speed,
 					HEADING_CONTROL_EXPLICIT, heading,
