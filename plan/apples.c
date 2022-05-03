@@ -153,29 +153,6 @@ const struct apples_tuning apples_tunings[] = {
 };
 
 /*
-const struct v2 approach_boom_targets[] = {
-	{ 5, 126 },
-	{ 25, 255 },
-};
-
-const unsigned int num_apples = sizeof(approach_boom_targets) / sizeof(approach_boom_targets[0]);
-
-const struct v2 drop_boom_targets[] = {
-	{ -25, 255 },
-	{ -25, 255 },
-};
-
-
-const int reach_distances[] = {
-	15,
-	0,
-};
-
-const int back_up_distances[] = {
-	70,
-	200,
-};
-
 // Note: Wrong direction!
 const int rear_distances_makespace[] = {
 	600,
@@ -189,27 +166,6 @@ const int corner_distances_makespace[] = {
 	1350,
 	1350,
 	1350,
-};
-
-const int rear_distances_home[] = {
-	650,
-	650,
-	650,
-	650,
-};
-
-const int corner_distances_home[] = {
-	940,
-	940,
-	940,
-	940,
-};
-
-const int corner_front_distances_home[] = {
-	80,
-	80,
-	80,
-	80,
 };
 */
 
