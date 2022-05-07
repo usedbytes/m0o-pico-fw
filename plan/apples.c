@@ -162,13 +162,13 @@ const struct apples_tuning apples_tunings[] = {
 			{ -25, 255 },
 			{ -25, 255 },
 		},
-		.reach_distances = { 15, 0 },
+		.reach_distances = { 15, 5 },
 		.back_up_distances = { 70, 200 },
 
 		.permiter_approach_distances = {
-			620,
-			620,
-			620,
+			640,
+			628,
+			633,
 			640,
 		},
 		.perimeter_approach_speed_ctrl = SPEED_CONTROL_REAR_DISTANCE,
@@ -236,6 +236,11 @@ enum coordinator_state {
 	COORD_STATE_TREE_TURN_AWAY,
 	COORD_STATE_CORNER_APPROACH,
 	COORD_STATE_CORNER_TURN,
+
+	COORD_STATE_TEST_BRANCH_APPROACH,
+	COORD_STATE_TEST_WAIT,
+	COORD_STATE_TEST_MOVE_TO_EJECT,
+	COORD_STATE_TEST_EJECT_STATIONARY,
 };
 
 enum picker_state {
@@ -265,23 +270,23 @@ static void picker_tick(struct picker_planner *pp, struct platform *platform, st
 		switch (pp->requested) {
 		case PICKER_STATE_OPEN:
 			pp->current = pp->requested | PICKER_STATE__ING;
-			platform_ioe_pwm_set_enabled(platform, 2, true);
+			//platform_ioe_pwm_set_enabled(platform, 2, true);
 			platform_ioe_set(platform, 2, APPLE_SERVO_APPROACH);
 			break;
 		case PICKER_STATE_CLOSED:
 			pp->current = pp->requested | PICKER_STATE__ING;
-			platform_ioe_pwm_set_enabled(platform, 2, true);
+			//platform_ioe_pwm_set_enabled(platform, 2, true);
 			platform_ioe_set(platform, 2, APPLE_SERVO_PICK);
 			break;
 		case PICKER_STATE_EJECT:
 			pp->current = pp->requested | PICKER_STATE__ING;
-			platform_ioe_pwm_set_enabled(platform, 2, true);
+			//platform_ioe_pwm_set_enabled(platform, 2, true);
 			platform_ioe_set(platform, 2, APPLE_SERVO_EJECT);
 			break;
 		case PICKER_STATE_IDLE:
 		default:
 			pp->current = pp->requested;
-			platform_ioe_pwm_set_enabled(platform, 2, false);
+			//platform_ioe_pwm_set_enabled(platform, 2, false);
 			break;
 		}
 		pp->end_timestamp = make_timeout_time_ms(wait_time_ms);
@@ -291,7 +296,7 @@ static void picker_tick(struct picker_planner *pp, struct platform *platform, st
 		absolute_time_t now = get_absolute_time();
 		if (to_us_since_boot(now) >= pp->end_timestamp) {
 			pp->current = pp->requested;
-			platform_ioe_pwm_set_enabled(platform, 2, false);
+			//platform_ioe_pwm_set_enabled(platform, 2, false);
 		}
 	}
 }
@@ -381,6 +386,7 @@ struct apple_task {
 	bool state_entry;
 	bool run_coord;
 	enum coordinator_state coord_state;
+	enum coordinator_state coord_end_state;
 	struct chassis_planner cp;
 	struct boom_planner bp;
 	struct picker_planner pp;
@@ -862,6 +868,10 @@ static void coord_set_state(struct apple_task *task, enum coordinator_state stat
 {
 	task->coord_state = state;
 	task->state_entry = true;
+
+	if (task->coord_state == task->coord_end_state) {
+		task->coord_state = COORD_STATE_STOP;
+	}
 }
 
 static void coord_tick(struct apple_task *task, struct platform *platform, struct platform_status_report *status)
@@ -1095,6 +1105,43 @@ static void coord_tick(struct apple_task *task, struct platform *platform, struc
 			chassis_stop(&task->cp);
 		}
 		break;
+	/*
+	 * Testing apple dropping
+	 */
+	case COORD_STATE_TEST_BRANCH_APPROACH:
+		if (entering) {
+			//boom_set(&task->bp, task->tuning->approach_boom_targets[task->apple_idx]);
+			boom_set(&task->bp, task->tuning->drop_boom_targets[task->apple_idx]);
+			picker_set(&task->pp, PICKER_STATE_CLOSED);
+		}
+
+		if (boom_done(&task->bp) && picker_done(&task->pp)) {
+			log_printf(&util_logger, "move to TEST_WAIT");
+			coord_set_state(task, COORD_STATE_TEST_WAIT);
+		}
+		break;
+	case COORD_STATE_TEST_WAIT:
+		break;
+	case COORD_STATE_TEST_MOVE_TO_EJECT:
+		if (entering) {
+			boom_set(&task->bp, tuning->drop_boom_targets[task->apple_idx]);
+			picker_set(&task->pp, PICKER_STATE_CLOSED);
+		}
+
+		if (boom_done(&task->bp)) {
+			log_printf(&util_logger, "move to TEST_EJECT_STATIONARY");
+			coord_set_state(task, COORD_STATE_TEST_EJECT_STATIONARY);
+		}
+		break;
+	case COORD_STATE_TEST_EJECT_STATIONARY:
+		if (entering) {
+			picker_set(&task->pp, PICKER_STATE_EJECT);
+		}
+
+		if (picker_done(&task->pp)) {
+			coord_set_state(task, COORD_STATE_TEST_BRANCH_APPROACH);
+		}
+		break;
 	}
 
 	boom_tick(&task->bp, platform, status);
@@ -1125,6 +1172,21 @@ static void apple_task_handle_input(struct planner_task *ptask, struct platform 
 		task->run_coord = true;
 		log_printf(&util_logger, "coord input: %d, %d", task->coord_state, task->state_entry);
 	}
+
+	if (input->buttons.pressed & BTN_HEART) {
+		task->apple_idx = 0;
+		task->branch_idx = 0;
+		task->tuning = &apples_tunings[TUNING_MAKESPACE];
+		coord_set_state(task, COORD_STATE_TEST_BRANCH_APPROACH);
+		task->run_coord = true;
+		log_printf(&util_logger, "coord input: %d, %d", task->coord_state, task->state_entry);
+	}
+
+	if ((input->buttons.pressed & BTN_CROSS) &&
+			(task->coord_state == COORD_STATE_TEST_WAIT)) {
+		task->tuning = &apples_tunings[TUNING_MAKESPACE];
+		coord_set_state(task, COORD_STATE_TEST_MOVE_TO_EJECT);
+	}
 }
 
 static void apple_task_on_start(struct planner_task *ptask, struct platform *platform)
@@ -1136,6 +1198,7 @@ static void apple_task_on_start(struct planner_task *ptask, struct platform *pla
 	task->cp.controller_active = false;
 	task->run_coord = false;
 	platform_servo_level(platform, true);
+	platform_ioe_pwm_set_enabled(platform, 2, true);
 }
 
 static void apple_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status)
