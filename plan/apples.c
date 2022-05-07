@@ -150,6 +150,39 @@ const struct apples_tuning apples_tunings[] = {
 		.corner_approach_speed_ctrl = SPEED_CONTROL_FRONT_DISTANCE,
 		.corner_approach_end_cond = END_COND_FRONT_DISTANCE_LTE,
 	},
+	[TUNING_MAKESPACE] = {
+		.slow_speed = 2,
+		.fast_speed = 6,
+		.very_fast_speed = 24,
+		.approach_boom_targets = {
+			{ 5, 126 },
+			{ 25, 253 },
+		},
+		.drop_boom_targets = {
+			{ -25, 255 },
+			{ -25, 255 },
+		},
+		.reach_distances = { 15, 0 },
+		.back_up_distances = { 70, 200 },
+
+		.permiter_approach_distances = {
+			620,
+			620,
+			620,
+			640,
+		},
+		.perimeter_approach_speed_ctrl = SPEED_CONTROL_REAR_DISTANCE,
+		.perimeter_approach_end_cond = END_COND_REAR_DISTANCE_GTE,
+
+		.corner_approach_distances = {
+			50,
+			50,
+			50,
+			50,
+		},
+		.corner_approach_speed_ctrl = SPEED_CONTROL_FRONT_DISTANCE,
+		.corner_approach_end_cond = END_COND_FRONT_DISTANCE_LTE,
+	},
 };
 
 /*
@@ -1075,10 +1108,19 @@ static void apple_task_handle_input(struct planner_task *ptask, struct platform 
 {
 	struct apple_task *task = (struct apple_task *)ptask;
 
-	if (input->buttons.pressed & BTN_TRIANGLE) {
+	if (input->buttons.pressed & BTN_SQUARE) {
 		task->apple_idx = 0;
 		task->branch_idx = 0;
 		task->tuning = &apples_tunings[TUNING_HOME];
+		coord_set_state(task, COORD_STATE_CORNER_TURN);
+		task->run_coord = true;
+		log_printf(&util_logger, "coord input: %d, %d", task->coord_state, task->state_entry);
+	}
+
+	if (input->buttons.pressed & BTN_TRIANGLE) {
+		task->apple_idx = 0;
+		task->branch_idx = 0;
+		task->tuning = &apples_tunings[TUNING_MAKESPACE];
 		coord_set_state(task, COORD_STATE_CORNER_TURN);
 		task->run_coord = true;
 		log_printf(&util_logger, "coord input: %d, %d", task->coord_state, task->state_entry);
