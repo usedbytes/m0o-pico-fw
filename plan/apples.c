@@ -175,10 +175,10 @@ const struct apples_tuning apples_tunings[] = {
 		.perimeter_approach_end_cond = END_COND_REAR_DISTANCE_GTE,
 
 		.corner_approach_distances = {
-			50,
-			50,
-			50,
-			50,
+			60,
+			60,
+			60,
+			60,
 		},
 		.corner_approach_speed_ctrl = SPEED_CONTROL_FRONT_DISTANCE,
 		.corner_approach_end_cond = END_COND_FRONT_DISTANCE_LTE,
