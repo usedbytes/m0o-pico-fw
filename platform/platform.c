@@ -897,6 +897,17 @@ static void platform_boom_trajectory_controller_run(absolute_time_t scheduled, v
 	struct v2 new_target = vec2_add(platform->trajectory.start, vec2_mul(platform->trajectory.unit, distance));
 	dp = vec2_sub(new_target, current_pos);
 
+	/*
+	log_printf(&util_logger, "traj %3.3f, %3.3f, %3.3f, %3.3f, %3.3f, %3.3f",
+			current_pos.x,
+			current_pos.y,
+			platform->trajectory.start.x + sd * platform->trajectory.unit.x,
+			platform->trajectory.start.y + sd * platform->trajectory.unit.y,
+			new_target.x,
+			new_target.y
+	);
+	*/
+
 	// Run the kinematics to get the movement vector
 	struct m2 j = get_jacobian(radians, mm);
 	struct m2 j_inv = m2_inverse(&j);
