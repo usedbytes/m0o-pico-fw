@@ -53,7 +53,7 @@ struct trough_task {
 
 const uint8_t threshold = 10;
 
-const struct v2 barn = { 150, 100 };
+const struct v2 barn = { 120, 100 };
 const struct v2 troughs[] = {
 	{ 150, 875 },
 	{ 1300, 1300 },
@@ -66,9 +66,9 @@ const float overshoot[] = {
 	0.0,
 };
 const float home_distance[] = {
-	150,
-	220,
-	150,
+	160,
+	230,
+	160,
 };
 
 static void trough_camera_cb(struct camera_buffer *buf, void *p)
@@ -263,7 +263,7 @@ static int find_red_blob(struct camera_buffer *buf, int *left, int *right, int *
 
 static void trough_approach(struct trough_task *task, struct platform_status_report *status)
 {
-	const float deg_per_pixel = 0.835;
+	const float deg_per_pixel = 0.835 * 1.5;
 	const int bottom_line = 58;
 	const int min_width = 2;
 	struct platform *platform = task->platform;
@@ -298,7 +298,7 @@ static void trough_approach(struct trough_task *task, struct platform_status_rep
 	}
 
 	float diff = (task->left - 20) * deg_per_pixel;
-	platform_heading_controller_set(platform, 30, current_heading + diff);
+	platform_heading_controller_set(platform, 35, current_heading + diff);
 
 	request_frame(task);
 }
@@ -306,7 +306,7 @@ static void trough_approach(struct trough_task *task, struct platform_status_rep
 static void trough_prox(struct trough_task *task, struct platform_status_report *status)
 {
 	struct platform *platform = task->platform;
-	const int target_distance = 100;
+	const int target_distance = 90;
 
 	if (status->front_laser.timestamp <= task->timestamp) {
 		// Range not measured yet
@@ -326,7 +326,7 @@ static void trough_prox(struct trough_task *task, struct platform_status_report 
 	platform_set_velocity(platform, 0, 0);
 	task->state = TROUGH_BOOM_POSITION;
 	task->timestamp = get_absolute_time();
-	platform_boom_trajectory_controller_adjust_target(platform, (struct v2){ status->front_laser.range_mm - 55, 40 },
+	platform_boom_trajectory_controller_adjust_target(platform, (struct v2){ status->front_laser.range_mm - 45, 40 },
 			TRAJECTORY_ADJUST_SET_ABSOLUTE);
 	platform_boom_trajectory_controller_set_enabled(platform, true);
 }
@@ -335,13 +335,14 @@ static void trough_boom_position(struct trough_task *task, struct platform_statu
 {
 	struct platform *platform = task->platform;
 	const int64_t timeout_ns = 2000000;
-	const int range_slop = 30;
+	const int range_slop = 35;
 	absolute_time_t now = get_absolute_time();
 	int64_t diff = absolute_time_diff_us(task->timestamp, now);
 
 	float x = status->boom_pos.x;
 	bool timeout = diff > timeout_ns;
-	bool in_range = (x > ((status->front_laser.range_mm - range_slop)));
+	//bool in_range = (x > ((status->front_laser.range_mm - range_slop)));
+	bool in_range = true;
 
 	if ((status->status & PLATFORM_STATUS_BOOM_TARGET_REACHED) || (timeout && in_range)) {
 		log_printf(&util_logger, "Boom positioned!");
@@ -367,7 +368,7 @@ static void trough_wait_for_grain(struct trough_task *task, struct platform_stat
 	const int grain_drop_ms = 3300;
 	struct platform *platform = task->platform;
 
-#define GRAIN_FLAP_CLOSED 3200
+#define GRAIN_FLAP_CLOSED 3000
 	absolute_time_t now = get_absolute_time();
 	int64_t diff = absolute_time_diff_us(task->timestamp, now);
 	//log_printf(&util_logger, "waiting: %"PRId64, diff);
@@ -513,6 +514,7 @@ static void trough_task_on_start(struct planner_task *ptask, struct platform *pl
 	task->state = TROUGH_SET_EAST;
 	task->trough_idx = 0;
 	platform_heading_controller_set_enabled(task->platform, true);
+	platform_servo_level(platform, true);
 	request_frame(task);
 }
 
