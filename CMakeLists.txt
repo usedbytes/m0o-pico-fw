@@ -31,6 +31,8 @@ add_executable(rebound
 	platform/vl53l0x.c
 
 	plan/apples.c
+	plan/plan_chassis.c
+	plan/plan_boom.c
 	plan/direction.c
 	plan/servo.c
 	plan/trough.c
