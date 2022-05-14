@@ -21,6 +21,7 @@
 #include "plan/apples.h"
 #include "plan/direction.h"
 #include "plan/servo.h"
+#include "plan/sheep.h"
 #include "plan/trough.h"
 #include "platform/platform.h"
 #include "util.h"
@@ -357,7 +358,7 @@ const char *handle_system_input(struct platform *platform, struct input_state *i
 	}
 
 	if (input->hat.pressed & HAT_LEFT) {
-		return "servo";
+		return "sheep";
 	}
 
 	return NULL;
@@ -438,6 +439,10 @@ int main()
 		{
 			"servo",
 			servo_get_task(),
+		},
+		{
+			"sheep",
+			sheep_get_task(),
 		},
 		{
 			"direction",

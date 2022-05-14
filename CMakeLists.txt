@@ -35,6 +35,7 @@ add_executable(rebound
 	plan/plan_boom.c
 	plan/direction.c
 	plan/servo.c
+	plan/sheep.c
 	plan/trough.c
 )
 
