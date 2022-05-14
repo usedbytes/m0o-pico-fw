@@ -235,11 +235,13 @@ static void rc_task_handle_input(struct planner_task *ptask, struct platform *pl
 #define SERVO_STEP 50
 #define GRAIN_FLAP_OPEN   4850
 #define GRAIN_FLAP_CLOSED 3200
+#define SHEEP_OPEN   1350
+#define SHEEP_CLOSED 7500
 			if (input->hat.pressed & HAT_LEFT) {
-				flap_servo = GRAIN_FLAP_CLOSED;
+				flap_servo = SHEEP_CLOSED;
 			}
 			if (input->hat.pressed & HAT_RIGHT) {
-				flap_servo = GRAIN_FLAP_OPEN;
+				flap_servo = SHEEP_OPEN;
 			}
 			log_printf(&util_logger, "flap servo: %d", flap_servo);
 			platform_ioe_set(platform, 2, flap_servo);
@@ -355,7 +357,7 @@ const char *handle_system_input(struct platform *platform, struct input_state *i
 	}
 
 	if (input->hat.pressed & HAT_LEFT) {
-		return "direction";
+		return "servo";
 	}
 
 	return NULL;
