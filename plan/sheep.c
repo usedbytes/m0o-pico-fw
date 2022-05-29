@@ -6,20 +6,36 @@
 
 #include "planner.h"
 #include "sheep.h"
+#include "plan_boom.h"
 #include "util.h"
 
 #define SHEEP_OPEN   1350
 #define SHEEP_CLOSED 7500
 
+const float sheep_pickup_y = 33.0;
+const float sheep_pickup_x = 30.0;
+const float sheep_pen_safe_y = 150.0;
+const float pen_safe_y = 60.0;
+
+enum sheep_lift_state {
+	SHEEP_LIFT_STATE_IDLE = 0,
+	SHEEP_LIFT_STATE_PICKUP,
+	SHEEP_LIFT_STATE_PEN_LIFT,
+};
+
 struct sheep_task {
 	struct planner_task base;
 
-	bool jaw_toggle;
+	bool jaw_open;
+
+	struct boom_planner bp;
+	enum sheep_lift_state lift_state;
 };
 
 static void sheep_task_on_start(struct planner_task *ptask, struct platform *platform)
 {
 	platform_ioe_pwm_set_enabled(platform, 2, true);
+	platform_servo_level(platform, true);
 }
 
 static void sheep_task_handle_input(struct planner_task *ptask, struct platform *platform, struct input_state *input)
@@ -27,8 +43,8 @@ static void sheep_task_handle_input(struct planner_task *ptask, struct platform 
 	struct sheep_task *task = (struct sheep_task *)ptask;
 
 	if (input->buttons.pressed & BTN_L2) {
-		task->jaw_toggle = !task->jaw_toggle;
-		platform_ioe_set(platform, 2, task->jaw_toggle ? SHEEP_OPEN : SHEEP_CLOSED);
+		task->jaw_open = !task->jaw_open;
+		platform_ioe_set(platform, 2, task->jaw_open ? SHEEP_OPEN : SHEEP_CLOSED);
 	}
 
 	if ((input->hat.held == 0) && input->hat.released) {
@@ -81,21 +97,14 @@ static void sheep_task_handle_input(struct planner_task *ptask, struct platform 
 		}
 	}
 
-	if (input->buttons.held & BTN_R1) {
-#define APPLE_EJECT 2000
-#define APPLE_PICK  3750
-#define APPLE_APPROACH 7500
-		if (input->buttons.pressed & BTN_CROSS) {
-			platform_ioe_set(platform, 2, APPLE_APPROACH);
-		}
+	if (input->buttons.pressed & BTN_CROSS) {
+		task->jaw_open = true;
+		platform_ioe_set(platform, 2, task->jaw_open ? SHEEP_OPEN : SHEEP_CLOSED);
+		task->lift_state = SHEEP_LIFT_STATE_PICKUP;
+	}
 
-		if (input->buttons.pressed & BTN_SQUARE) {
-			platform_ioe_set(platform, 2, APPLE_PICK);
-		}
-
-		if (input->buttons.pressed & BTN_TRIANGLE) {
-			platform_ioe_set(platform, 2, APPLE_EJECT);
-		}
+	if (input->buttons.pressed & BTN_TRIANGLE) {
+		task->lift_state = SHEEP_LIFT_STATE_PEN_LIFT;
 	}
 
 	if (input->buttons.held & BTN_R2) {
@@ -109,7 +118,26 @@ static void sheep_task_handle_input(struct planner_task *ptask, struct platform 
 
 static void sheep_task_tick(struct planner_task *ptask, struct platform *platform, struct platform_status_report *status)
 {
+	struct sheep_task *task = (struct sheep_task *)ptask;
 
+	switch (task->lift_state) {
+	case SHEEP_LIFT_STATE_PICKUP:
+		platform_boom_trajectory_controller_adjust_target(platform,
+				(struct v2){ sheep_pickup_x, sheep_pickup_y },
+				TRAJECTORY_ADJUST_SET_ABSOLUTE);
+		platform_boom_trajectory_controller_set_enabled(platform, true);
+		task->lift_state = SHEEP_LIFT_STATE_IDLE;
+		break;
+	case SHEEP_LIFT_STATE_PEN_LIFT:
+		platform_boom_trajectory_controller_adjust_target(platform,
+				(struct v2){ status->boom_pos.x, sheep_pen_safe_y },
+				TRAJECTORY_ADJUST_SET_ABSOLUTE);
+		platform_boom_trajectory_controller_set_enabled(platform, true);
+		task->lift_state = SHEEP_LIFT_STATE_IDLE;
+		break;
+	case SHEEP_LIFT_STATE_IDLE:
+		break;
+	}
 }
 
 struct planner_task *sheep_get_task(void)
