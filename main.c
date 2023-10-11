@@ -361,6 +361,10 @@ const char *handle_system_input(struct platform *platform, struct input_state *i
 		return "sheep";
 	}
 
+	if (input->hat.pressed & HAT_RIGHT) {
+		return "spin";
+	}
+
 	return NULL;
 }
 
@@ -396,6 +400,8 @@ struct planner_task *switch_task(struct platform *platform, struct planner_task 
 
 	return to;
 }
+
+extern struct planner_task *spin_get_task(void);
 
 int main()
 {
@@ -447,6 +453,10 @@ int main()
 		{
 			"direction",
 			direction_get_task(),
+		},
+		{
+			"spin",
+			spin_get_task(),
 		},
 	};
 	const int n_tasks = sizeof(task_list) / sizeof(task_list[0]);
