@@ -77,6 +77,7 @@ const struct apples_tuning apples_tunings[] = {
 		.corner_approach_speed_ctrl = SPEED_CONTROL_FRONT_DISTANCE,
 		.corner_approach_end_cond = END_COND_FRONT_DISTANCE_LTE,
 	},
+#define BUCKET_ADJ 50
 	[TUNING_MAKESPACE] = {
 		.slow_speed = 2,
 		.fast_speed = 6,
@@ -90,22 +91,22 @@ const struct apples_tuning apples_tunings[] = {
 			{ -25, 255 },
 		},
 		.reach_distances = { 15, 5 },
-		.back_up_distances = { 70, 200 },
+		.back_up_distances = { 70 + BUCKET_ADJ, 200 + BUCKET_ADJ },
 
 		.permiter_approach_distances = {
-			640,
-			628,
-			633,
-			640,
+			640 + BUCKET_ADJ,
+			628 + BUCKET_ADJ,
+			633 + BUCKET_ADJ,
+			640 + BUCKET_ADJ,
 		},
 		.perimeter_approach_speed_ctrl = SPEED_CONTROL_REAR_DISTANCE,
 		.perimeter_approach_end_cond = END_COND_REAR_DISTANCE_GTE,
 
 		.corner_approach_distances = {
-			60,
-			60,
-			60,
-			60,
+			60 + BUCKET_ADJ,
+			60 + BUCKET_ADJ,
+			60 + BUCKET_ADJ,
+			60 + BUCKET_ADJ,
 		},
 		.corner_approach_speed_ctrl = SPEED_CONTROL_FRONT_DISTANCE,
 		.corner_approach_end_cond = END_COND_FRONT_DISTANCE_LTE,
